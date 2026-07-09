@@ -285,11 +285,15 @@ const processUSSDAfterPayment = async (order) => {
 };
 
 // GET /api/payments/success
+// GET /api/payments/success
 export const paymentSuccess = async (req, res) => {
-  return res.send('<html><body><h1>Paiement réussi !</h1><p>Vous pouvez fermer cette page.</p></body></html>');
+  // Redirige vers l'app (scheme skyrecharge://) — le navigateur intégré
+  // ouvert via WebBrowser.openAuthSessionAsync détecte cette redirection
+  // et se ferme automatiquement, ramenant l'utilisateur dans l'app.
+  return res.redirect('skyrecharge://payment-return?status=success');
 };
 
 // GET /api/payments/failed
 export const paymentFailed = async (req, res) => {
-  return res.send('<html><body><h1>Paiement échoué.</h1><p>Vous pouvez fermer cette page.</p></body></html>');
+  return res.redirect('skyrecharge://payment-return?status=failed');
 };
