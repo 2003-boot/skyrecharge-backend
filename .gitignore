@@ -1,0 +1,23 @@
+# Secrets — ne JAMAIS committer
+.env
+.env.*
+!.env.example
+
+# Dépendances
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Éditeurs
+.vscode/
+.idea/
+
+# Firebase / clés de service
+*.serviceAccountKey.json
+firebase-adminsdk*.json
