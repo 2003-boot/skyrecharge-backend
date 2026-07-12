@@ -217,6 +217,11 @@ const processUSSDOrder = async (order) => {
 export const getOrder = async (req, res) => {
   try {
     const { id } = req.params;
+    // Cet endpoint est poll toutes les 3s pendant le traitement d'une
+    // commande (écran processing.tsx) — il ne doit JAMAIS renvoyer une
+    // réponse mise en cache (304 avec un corps périmé), sous peine de
+    // rater un changement de statut réel (ex: passage à "refunded").
+    res.set('Cache-Control', 'no-store');
     const result = await db.query(
       `SELECT o.*, op.name as offer_name
        FROM orders o
