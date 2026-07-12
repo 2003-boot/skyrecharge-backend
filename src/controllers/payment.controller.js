@@ -257,7 +257,7 @@ const processUSSDAfterPayment = async (order) => {
       }
     }
 
-    const result = await sendUSSD(order.id, ussdCode, ussdSteps, modemUrl);
+    const result = await sendUSSD(order.id, ussdCode, ussdSteps, modemUrl, operator);
 
     if (result.success) {
       await db.query(

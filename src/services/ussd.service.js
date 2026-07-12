@@ -1,23 +1,33 @@
 import redisClient from '../config/redis.js';
 
-const QUEUE_NAME = 'ussd_queue';
+const QUEUE_PREFIX = 'ussd_queue';
 const RESULT_PREFIX = 'ussd_result:';
 const POLL_INTERVAL = 1000; // Vérifier toutes les secondes
 
+// Chaque opérateur a sa propre file Redis (ussd_queue:moov, ussd_queue:orange,
+// ussd_queue:mtn...) — ça permet au worker Pi de traiter plusieurs modems en
+// parallèle au lieu de tout sérialiser dans une seule file commune.
+const getQueueName = (operator) => {
+  const op = (operator || 'moov').toLowerCase();
+  return `${QUEUE_PREFIX}:${op}`;
+};
+
 // Envoyer une commande USSD au Pi via Redis
-export const sendUSSD = async (orderId, ussdCode, ussdSteps = null, modemUrl = null) => {
+export const sendUSSD = async (orderId, ussdCode, ussdSteps = null, modemUrl = null, operator = null) => {
   try {
+    const queueName = getQueueName(operator);
+
     const command = JSON.stringify({
       order_id: orderId,
       ussd_code: ussdCode,
       ussd_steps: ussdSteps,
-      modem_url: modemUrl, // ← nouveau
+      modem_url: modemUrl,
     });
 
     console.log(`📤 Envoi commande USSD: ${ussdCode} pour commande ${orderId}`);
-    console.log(`📡 Modem: ${modemUrl}`);
-    await redisClient.lPush(QUEUE_NAME, command);
-    console.log(`✅ Commande ajoutée dans Redis`);
+    console.log(`📡 Modem: ${modemUrl} | File: ${queueName}`);
+    await redisClient.lPush(queueName, command);
+    console.log(`✅ Commande ajoutée dans Redis (${queueName})`);
 
     const result = await waitForResult(orderId);
     return result;
