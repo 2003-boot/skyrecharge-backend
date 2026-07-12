@@ -280,13 +280,14 @@ export const getOrderHistory = async (req, res) => {
 // GET /api/offers
 export const getOffers = async (req, res) => {
   try {
-    const { operator, type } = req.query;
+    const { operator, type, category } = req.query;
     let whereClause = 'WHERE is_active = TRUE';
     const params = [];
     let paramCount = 1;
 
     if (operator) { whereClause += ` AND operator = $${paramCount++}`; params.push(operator); }
     if (type) { whereClause += ` AND offer_type = $${paramCount++}`; params.push(type); }
+    if (category) { whereClause += ` AND category = $${paramCount++}`; params.push(category); }
 
     const result = await db.query(
       `SELECT * FROM operator_offers ${whereClause} ORDER BY price ASC`,
