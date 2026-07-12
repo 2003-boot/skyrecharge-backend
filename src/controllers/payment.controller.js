@@ -295,15 +295,29 @@ const processUSSDAfterPayment = async (order) => {
   }
 };
 
-// Message affiché au client selon la cause de l'échec — jamais de détail
-// technique interne, mais une explication utile plutôt qu'un message
-// générique quand on connaît la vraie cause.
+// Messages affichés au client selon la cause de l'échec — jamais de
+// détail technique interne, mais une explication utile plutôt qu'un
+// message générique quand on connaît la vraie cause.
+//
+// Deux jeux distincts, pour ne JAMAIS affirmer un remboursement qui n'a
+// pas réellement eu lieu :
+// - REFUND_MESSAGES        : le cashin a réussi, l'argent est reparti.
+// - REFUND_MESSAGES_MANUAL : le cashin a échoué ou a été sauté
+//   (throttle) — le remboursement est encore à traiter, on ne dit PAS
+//   "vous avez été remboursé".
 const REFUND_MESSAGES = {
   technical: "Votre transaction n'a pas pu être finalisée. Le remboursement a été initié automatiquement.",
   insufficient_balance: "Le fournisseur ne dispose pas actuellement d'assez de solde pour traiter votre demande. Vous avez été remboursé automatiquement — vous pouvez réessayer avec un montant plus petit, ou plus tard.",
   network_issue: "Un problème de réseau chez votre opérateur a empêché la transaction. Vous avez été remboursé automatiquement — vous pouvez réessayer dans quelques instants.",
-  network_issue_throttled: "Plusieurs tentatives ont échoué pour cause de réseau opérateur. Votre remboursement est en cours de traitement par notre équipe.",
   other: "Votre transaction n'a pas pu être finalisée. Le remboursement a été initié automatiquement.",
+};
+
+const REFUND_MESSAGES_MANUAL = {
+  technical: "Votre transaction n'a pas pu être finalisée. Votre remboursement est en cours de traitement par notre équipe.",
+  insufficient_balance: "Le fournisseur ne dispose pas actuellement d'assez de solde pour traiter votre demande. Votre remboursement est en cours de traitement par notre équipe.",
+  network_issue: "Un problème de réseau chez votre opérateur a empêché la transaction. Votre remboursement est en cours de traitement par notre équipe.",
+  network_issue_throttled: "Plusieurs tentatives ont échoué pour cause de réseau opérateur. Votre remboursement est en cours de traitement par notre équipe.",
+  other: "Votre transaction n'a pas pu être finalisée. Votre remboursement est en cours de traitement par notre équipe.",
 };
 
 // Anti-spam : chaque remboursement cashin coûte des frais réels (~2%).
@@ -352,7 +366,7 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
       `UPDATE orders
        SET status = 'refunded', refund_status = 'failed', failure_reason = $1, customer_message = $2, updated_at = NOW()
        WHERE id = $3`,
-      [internalReason, REFUND_MESSAGES.other, order.id]
+      [internalReason, REFUND_MESSAGES_MANUAL[failureType] || REFUND_MESSAGES_MANUAL.other, order.id]
     );
     io.emit('order:refunded', { orderId: order.id, refundStatus: 'failed' });
     return;
@@ -369,7 +383,7 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
         `UPDATE orders
          SET status = 'refunded', refund_status = 'manual_required', failure_reason = $1, customer_message = $2, updated_at = NOW()
          WHERE id = $3`,
-        [internalReason, REFUND_MESSAGES.network_issue_throttled, order.id]
+        [internalReason, REFUND_MESSAGES_MANUAL.network_issue_throttled, order.id]
       );
       io.emit('order:refunded', { orderId: order.id, refundStatus: 'manual_required' });
       return;
@@ -413,7 +427,7 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
       `UPDATE orders
        SET status = 'refunded', refund_status = 'failed', failure_reason = $1, customer_message = $2, updated_at = NOW()
        WHERE id = $3`,
-      [internalReason, REFUND_MESSAGES.other, order.id]
+      [internalReason, REFUND_MESSAGES_MANUAL[failureType] || REFUND_MESSAGES_MANUAL.other, order.id]
     );
 
     io.emit('order:refunded', { orderId: order.id, refundStatus: 'failed' });
