@@ -2,6 +2,7 @@ import express from 'express';
 import {
   initiateBabimoPayment,
   babimoWebhook,
+  cashinWebhook,
   checkStatus,
   paymentSuccess,
   paymentFailed,
@@ -14,8 +15,9 @@ const router = express.Router();
 router.post('/initiate', authenticateUser, initiateBabimoPayment);
 router.get('/check/:payToken', authenticateUser, checkStatus);
 
-// Routes publiques (webhook + redirections Wave)
+// Routes publiques (webhooks + redirections Wave)
 router.post('/webhook', babimoWebhook);
+router.post('/cashin-webhook', cashinWebhook);
 router.get('/success', paymentSuccess);
 router.get('/failed', paymentFailed);
 

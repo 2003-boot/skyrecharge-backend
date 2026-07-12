@@ -14,17 +14,27 @@ const getToken = async () => {
     return cachedToken;
   }
 
-  const response = await axios.post(`${BABIMO_BASE_URL}/v1/oauth/login`, {
-    email: BABIMO_EMAIL,
-    password: BABIMO_PASSWORD,
-  });
+  try {
+    const response = await axios.post(`${BABIMO_BASE_URL}/v1/oauth/login`, {
+      email: BABIMO_EMAIL,
+      password: BABIMO_PASSWORD,
+    });
 
-  cachedToken = response.data.authorisation.token;
-  // Token valide 1 heure (3600s) - on le renouvelle après 50 minutes
-  tokenExpiry = Date.now() + 50 * 60 * 1000;
+    cachedToken = response.data.authorisation.token;
+    // Token valide 1 heure (3600s) - on le renouvelle après 50 minutes
+    tokenExpiry = Date.now() + 50 * 60 * 1000;
 
-  console.log('✅ Token Babimo obtenu');
-  return cachedToken;
+    console.log('✅ Token Babimo obtenu');
+    return cachedToken;
+
+  } catch (error) {
+    // Avant ce correctif, une erreur ici (identifiants faux, compte
+    // désactivé...) remontait sans aucun détail — juste "Request failed
+    // with status code 401" sans savoir où ni pourquoi.
+    console.error('❌ Erreur obtention token Babimo — status:', error.response?.status);
+    console.error('❌ Erreur obtention token Babimo — data:', JSON.stringify(error.response?.data));
+    throw error;
+  }
 };
 
 // Initier un paiement
@@ -37,9 +47,9 @@ export const initiatePayment = async ({
   failedUrl,
   notifyUrl,
 }) => {
-  const token = await getToken();
-
   try {
+    const token = await getToken();
+
     const payload = {
       currency: 'XOF',
       payment_method: paymentMethod,
@@ -86,6 +96,52 @@ export const checkPaymentStatus = async (payToken) => {
     }
   );
   return response.data;
+};
+
+// Initier un remboursement (cashin) — renvoie de l'argent réel vers le
+// client. merchant_transaction_id doit être unique à CHAQUE appel (jamais
+// réutiliser celui du paiement d'origine).
+export const initiateCashin = async ({
+  refundId,
+  amount,
+  telephone,
+  paymentMethod,
+  notifyUrl,
+}) => {
+  try {
+    const token = await getToken();
+
+    const payload = {
+      payment_method: paymentMethod,
+      merchant_transaction_id: refundId,
+      amount,
+      telephone,
+      notify_url: notifyUrl,
+      refercence_cl: REFERENCE_CL,
+    };
+
+    console.log('📤 Payload Cashin Babimo:', JSON.stringify(payload, null, 2));
+    console.log('🌐 URL:', `${BABIMO_BASE_URL}/v1/collect/cashin`);
+
+    const response = await axios.post(
+      `${BABIMO_BASE_URL}/v1/collect/cashin`,
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    console.log('💸 Réponse Cashin Babimo:', JSON.stringify(response.data, null, 2));
+    return response.data.data;
+
+  } catch (error) {
+    console.error('❌ Erreur Cashin Babimo status:', error.response?.status);
+    console.error('❌ Erreur Cashin Babimo data:', JSON.stringify(error.response?.data, null, 2));
+    throw error;
+  }
 };
 
 // Mapping moyen de paiement → méthode Babimo

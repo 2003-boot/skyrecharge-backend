@@ -116,6 +116,10 @@ CREATE TABLE IF NOT EXISTS orders (
   merchant_transaction_id VARCHAR(255) UNIQUE,
   pay_token VARCHAR(255) UNIQUE,
   failure_reason TEXT,
+  refund_pay_token VARCHAR(255) UNIQUE,
+  refund_status VARCHAR(20)
+    CHECK (refund_status IS NULL OR refund_status IN ('pending', 'completed', 'failed')),
+  refund_initiated_at TIMESTAMP,
   completed_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()

@@ -1,6 +1,7 @@
 import {
   initiatePayment,
   checkPaymentStatus,
+  initiateCashin,
   PAYMENT_METHODS,
   requiresRedirect,
 } from '../services/babimo.service.js';
@@ -274,12 +275,6 @@ const processUSSDAfterPayment = async (order) => {
     // Tout échec (quelle que soit la cause) devient "refunded", jamais
     // "failed" — conformément au choix produit : le client ne voit que
     // "réussi" ou "remboursé", jamais un statut d'échec brut.
-    //
-    // ⚠️ IMPORTANT — état actuel (avant intégration de l'API cashin Babimo) :
-    // ceci ne fait QUE marquer la commande en base. Aucun argent n'est
-    // réellement renvoyé au client pour l'instant — ça viendra avec
-    // l'intégration cashin (étape 3 du plan). Ne pas dire au client qu'il
-    // a été remboursé tant que ce n'est pas vrai.
     const isTechnicalFailure = result.technical_failure === true;
     const internalReason = result.error || 'Recharge échouée';
 
@@ -288,37 +283,132 @@ const processUSSDAfterPayment = async (order) => {
     } else {
       console.error(`❌ [ÉCHEC RECHARGE] Commande ${order.id} — ${internalReason}`);
     }
-    // TODO (étape 3) : déclencher ici l'appel réel à l'API cashin Babimo
-    // pour rembourser le client, une fois sa documentation intégrée.
-    console.warn(`💸 Remboursement RÉEL non encore automatisé — commande ${order.id} à rembourser manuellement pour l'instant.`);
+
+    await triggerRefund(order, internalReason);
+
+  } catch (error) {
+    console.error(`❌ Erreur processUSSDAfterPayment:`, error.message);
+    await triggerRefund(order, error.message);
+  }
+};
+
+// Déclenche un remboursement réel via l'API cashin Babimo, et met à jour
+// la commande en conséquence. Ne bloque jamais la suite en cas d'échec de
+// l'appel cashin lui-même — mais logge très fort, car ce cas précis
+// (paiement encaissé, recharge ratée, ET remboursement automatique en
+// échec) est le pire scénario business : il nécessite une intervention
+// manuelle rapide pour ne pas perdre la confiance du client.
+const triggerRefund = async (order, internalReason) => {
+  // merchant_transaction_id doit être unique à chaque appel cashin —
+  // jamais réutiliser celui du paiement d'origine.
+  const refundId = `RET-${order.id}-${Date.now()}`;
+  const backendUrl = process.env.BACKEND_URL;
+
+  const babimoMethod = PAYMENT_METHODS[order.payment_method];
+  const telephone = (order.payment_phone || '').replace('+225', '').replace(/\s/g, '');
+
+  if (!babimoMethod || !telephone) {
+    console.error(`🚨 [REMBOURSEMENT IMPOSSIBLE] Commande ${order.id} — payment_method ou payment_phone manquant en base. INTERVENTION MANUELLE REQUISE.`);
+    await db.query(
+      `UPDATE orders
+       SET status = 'refunded', refund_status = 'failed', failure_reason = $1, updated_at = NOW()
+       WHERE id = $2`,
+      [internalReason, order.id]
+    );
+    io.emit('order:refunded', {
+      orderId: order.id,
+      message: "Votre transaction n'a pas pu être finalisée. Notre équipe traite votre remboursement.",
+    });
+    return;
+  }
+
+  try {
+    const cashinData = await initiateCashin({
+      refundId,
+      amount: order.total_amount,
+      telephone,
+      paymentMethod: babimoMethod,
+      notifyUrl: `${backendUrl}/api/payments/cashin-webhook`,
+    });
+
+    console.log(`💸 Remboursement initié pour commande ${order.id} — pay_token: ${cashinData.pay_token}`);
 
     await db.query(
       `UPDATE orders
-       SET status = 'refunded', failure_reason = $1, updated_at = NOW()
+       SET status = 'refunded',
+           refund_status = 'pending',
+           refund_pay_token = $1,
+           refund_initiated_at = NOW(),
+           failure_reason = $2,
+           updated_at = NOW()
+       WHERE id = $3`,
+      [cashinData.pay_token, internalReason, order.id]
+    );
+
+    io.emit('order:refunded', {
+      orderId: order.id,
+      message: "Votre transaction n'a pas pu être finalisée. Le remboursement a été initié automatiquement.",
+    });
+
+  } catch (error) {
+    // L'appel cashin lui-même a échoué (API Babimo indisponible, solde
+    // insuffisant sur le compte marchand, etc.) — le client a payé, la
+    // recharge a échoué, ET le remboursement automatique n'est pas parti.
+    // Cas le plus critique : à traiter manuellement en priorité.
+    console.error(`🚨 [ÉCHEC REMBOURSEMENT CASHIN] Commande ${order.id} — ${error.message}. INTERVENTION MANUELLE REQUISE.`);
+
+    await db.query(
+      `UPDATE orders
+       SET status = 'refunded', refund_status = 'failed', failure_reason = $1, updated_at = NOW()
        WHERE id = $2`,
       [internalReason, order.id]
     );
 
     io.emit('order:refunded', {
       orderId: order.id,
-      // Message neutre côté client — jamais de détail technique, et pas
-      // encore "vous avez été remboursé" tant que ce n'est pas vrai.
       message: "Votre transaction n'a pas pu être finalisée. Notre équipe traite votre remboursement.",
     });
+  }
+};
+
+// POST /api/payments/cashin-webhook
+// Confirmation asynchrone de Babimo une fois le remboursement traité.
+export const cashinWebhook = async (req, res) => {
+  try {
+    console.log('📥 Webhook Cashin Babimo reçu:', req.body);
+
+    const { merchant_transaction_id, status } = req.body;
+    if (!merchant_transaction_id) return res.status(200).json({ received: true });
+
+    const orderResult = await db.query(
+      'SELECT id FROM orders WHERE refund_pay_token = $1',
+      [merchant_transaction_id]
+    );
+
+    const order = orderResult.rows[0];
+    if (!order) {
+      console.log(`⚠️ Commande introuvable pour remboursement: ${merchant_transaction_id}`);
+      return res.status(200).json({ received: true });
+    }
+
+    const refundStatus = (status === 'SUCCESS' || status === 'SUCCESSFUL') ? 'completed' : 'failed';
+
+    await db.query(
+      `UPDATE orders SET refund_status = $1, updated_at = NOW() WHERE id = $2`,
+      [refundStatus, order.id]
+    );
+
+    if (refundStatus === 'failed') {
+      console.error(`🚨 [REMBOURSEMENT ÉCHOUÉ] Commande ${order.id} — statut Babimo: ${status}. INTERVENTION MANUELLE REQUISE.`);
+    } else {
+      console.log(`✅ Remboursement confirmé pour commande ${order.id}`);
+    }
+
+    return res.status(200).json({ received: true });
 
   } catch (error) {
-    console.error(`❌ Erreur processUSSDAfterPayment:`, error.message);
-    console.warn(`💸 Remboursement RÉEL non encore automatisé — commande ${order.id} à rembourser manuellement pour l'instant.`);
-    await db.query(
-      `UPDATE orders
-       SET status = 'refunded', failure_reason = $1, updated_at = NOW()
-       WHERE id = $2`,
-      [error.message, order.id]
-    );
-    io.emit('order:refunded', {
-      orderId: order.id,
-      message: "Votre transaction n'a pas pu être finalisée. Notre équipe traite votre remboursement.",
-    });
+    console.error('❌ Erreur cashinWebhook:', error.message);
+    return res.status(200).json({ received: true });
   }
 };
 
