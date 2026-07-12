@@ -350,11 +350,11 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
     console.error(`🚨 [REMBOURSEMENT IMPOSSIBLE] Commande ${order.id} — payment_method ou payment_phone manquant en base. INTERVENTION MANUELLE REQUISE.`);
     await db.query(
       `UPDATE orders
-       SET status = 'refunded', refund_status = 'failed', failure_reason = $1, updated_at = NOW()
-       WHERE id = $2`,
-      [internalReason, order.id]
+       SET status = 'refunded', refund_status = 'failed', failure_reason = $1, customer_message = $2, updated_at = NOW()
+       WHERE id = $3`,
+      [internalReason, REFUND_MESSAGES.other, order.id]
     );
-    io.emit('order:refunded', { orderId: order.id, message: REFUND_MESSAGES.other });
+    io.emit('order:refunded', { orderId: order.id, refundStatus: 'failed' });
     return;
   }
 
@@ -367,11 +367,11 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
       console.warn(`⏸️ [REMBOURSEMENT THROTTLÉ] Commande ${order.id} — trop de remboursements réseau récents pour user ${order.user_id}. Remboursement manuel requis.`);
       await db.query(
         `UPDATE orders
-         SET status = 'refunded', refund_status = 'manual_required', failure_reason = $1, updated_at = NOW()
-         WHERE id = $2`,
-        [internalReason, order.id]
+         SET status = 'refunded', refund_status = 'manual_required', failure_reason = $1, customer_message = $2, updated_at = NOW()
+         WHERE id = $3`,
+        [internalReason, REFUND_MESSAGES.network_issue_throttled, order.id]
       );
-      io.emit('order:refunded', { orderId: order.id, message: REFUND_MESSAGES.network_issue_throttled });
+      io.emit('order:refunded', { orderId: order.id, refundStatus: 'manual_required' });
       return;
     }
   }
@@ -394,15 +394,13 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
            refund_pay_token = $1,
            refund_initiated_at = NOW(),
            failure_reason = $2,
+           customer_message = $3,
            updated_at = NOW()
-       WHERE id = $3`,
-      [cashinData.pay_token, internalReason, order.id]
+       WHERE id = $4`,
+      [cashinData.pay_token, internalReason, REFUND_MESSAGES[failureType] || REFUND_MESSAGES.other, order.id]
     );
 
-    io.emit('order:refunded', {
-      orderId: order.id,
-      message: REFUND_MESSAGES[failureType] || REFUND_MESSAGES.other,
-    });
+    io.emit('order:refunded', { orderId: order.id, refundStatus: 'pending' });
 
   } catch (error) {
     // L'appel cashin lui-même a échoué (API Babimo indisponible, solde
@@ -413,12 +411,12 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
 
     await db.query(
       `UPDATE orders
-       SET status = 'refunded', refund_status = 'failed', failure_reason = $1, updated_at = NOW()
-       WHERE id = $2`,
-      [internalReason, order.id]
+       SET status = 'refunded', refund_status = 'failed', failure_reason = $1, customer_message = $2, updated_at = NOW()
+       WHERE id = $3`,
+      [internalReason, REFUND_MESSAGES.other, order.id]
     );
 
-    io.emit('order:refunded', { orderId: order.id, message: REFUND_MESSAGES.other });
+    io.emit('order:refunded', { orderId: order.id, refundStatus: 'failed' });
   }
 };
 

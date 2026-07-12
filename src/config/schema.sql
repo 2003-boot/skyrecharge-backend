@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS orders (
   refund_status VARCHAR(20)
     CHECK (refund_status IS NULL OR refund_status IN ('pending', 'completed', 'failed', 'manual_required')),
   refund_initiated_at TIMESTAMP,
+  customer_message TEXT,
   completed_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
