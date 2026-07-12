@@ -15,6 +15,14 @@ import { processQueuedOrders } from './services/queue.service.js';
 const app = express();
 const httpServer = createServer(app);
 
+// Le backend tourne désormais derrière Nginx (reverse proxy) sur le VPS —
+// il faut lui dire de faire confiance à l'en-tête X-Forwarded-For que
+// Nginx transmet, sinon express-rate-limit ne peut pas identifier
+// correctement l'IP réelle des clients (et lève une erreur de validation).
+// "1" = on fait confiance au premier proxy en amont (notre Nginx local),
+// pas à une chaîne de proxies arbitraire.
+app.set('trust proxy', 1);
+
 // Socket.io (dashboard admin temps réel)
 export const io = new Server(httpServer, {
   cors: {
