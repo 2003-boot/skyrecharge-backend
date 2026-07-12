@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS orders (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   order_type VARCHAR(20) NOT NULL
-    CHECK (order_type IN ('credit', 'pass_minutes', 'pass_appel')),
+    CHECK (order_type IN ('credit', 'pass_minutes', 'pass_appel', 'pass_internet')),
   beneficiary_phone VARCHAR(20) NOT NULL,
   beneficiary_name VARCHAR(100),
   is_self BOOLEAN DEFAULT TRUE,
