@@ -14,10 +14,11 @@ export default {
     apiKey: process.env.WAVE_API_KEY,
     apiUrl: process.env.WAVE_API_URL,
   },
-  africastalking: {
-    apiKey: process.env.AT_API_KEY,
-    username: process.env.AT_USERNAME,
-    senderId: process.env.AT_SENDER_ID,
+  hsms: {
+    email: process.env.HSMS_EMAIL,
+    password: process.env.HSMS_PASSWORD,
+    clientId: process.env.HSMS_CLIENT_ID,
+    clientSecret: process.env.HSMS_CLIENT_SECRET,
   },
   whatsapp: {
     number: process.env.WHATSAPP_NUMBER,
