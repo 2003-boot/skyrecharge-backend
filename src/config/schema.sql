@@ -67,10 +67,14 @@ CREATE TABLE IF NOT EXISTS operator_offers (
     CHECK (operator IN ('MTN', 'Orange', 'Moov')),
   offer_type VARCHAR(20) NOT NULL
     CHECK (offer_type IN ('pass_minutes', 'pass_internet', 'pass_appel')),
+  category VARCHAR(50),
+  subcategory VARCHAR(50),
   name VARCHAR(100) NOT NULL,
   description TEXT,
   price INTEGER NOT NULL,
   validity VARCHAR(50),
+  ussd_code TEXT,
+  ussd_steps JSONB,
   is_active BOOLEAN DEFAULT TRUE,
   is_popular BOOLEAN DEFAULT FALSE,
   is_new BOOLEAN DEFAULT FALSE,
@@ -251,30 +255,3 @@ INSERT INTO config (key, value, description) VALUES
   ('score_penalty_refuse', '-5', 'Points perdus pour un refus de mission'),
   ('score_penalty_timeout', '-5', 'Points perdus pour un timeout')
 ON CONFLICT (key) DO NOTHING;
-
--- Offres opérateurs par défaut
-INSERT INTO operator_offers (operator, offer_type, name, description, price, validity, is_popular, is_new) VALUES
-  -- MTN Pass Minutes
-  ('MTN', 'pass_internet', 'Pass 100 Mo', '100 Mo de données', 300, '1 jour', FALSE, FALSE),
-  ('MTN', 'pass_internet', 'Pass 500 Mo', '500 Mo de données', 500, '2 jours', TRUE, FALSE),
-  ('MTN', 'pass_internet', 'Pass 1 Go', '1 Go de données', 900, '7 jours', FALSE, FALSE),
-  ('MTN', 'pass_internet', 'Pass 5 Go', '5 Go de données', 2000, '30 jours', FALSE, TRUE),
-  -- MTN Pass Appel
-  ('MTN', 'pass_appel', 'Pass Nuit', 'Appels illimités MTN de 22h à 6h', 200, '1 nuit', FALSE, FALSE),
-  ('MTN', 'pass_appel', 'Pass Journée', 'Appels illimités MTN de 6h à 22h', 500, '1 jour', TRUE, FALSE),
-  ('MTN', 'pass_appel', 'Pass Weekend', 'Appels illimités MTN samedi et dimanche', 800, '2 jours', FALSE, FALSE),
-  ('MTN', 'pass_appel', 'Pass Semaine', 'Appels illimités MTN pendant 7 jours', 1500, '7 jours', FALSE, TRUE),
-  -- Orange Pass Minutes
-  ('Orange', 'pass_internet', 'Pass 100 Mo', '100 Mo de données', 350, '1 jour', FALSE, FALSE),
-  ('Orange', 'pass_internet', 'Pass 500 Mo', '500 Mo de données', 550, '2 jours', TRUE, FALSE),
-  ('Orange', 'pass_internet', 'Pass 1 Go', '1 Go de données', 950, '7 jours', FALSE, FALSE),
-  -- Orange Pass Appel
-  ('Orange', 'pass_appel', 'Pass Journée', 'Appels illimités Orange', 500, '1 jour', TRUE, FALSE),
-  ('Orange', 'pass_appel', 'Pass Semaine', 'Appels illimités Orange 7 jours', 1500, '7 jours', FALSE, FALSE),
-  -- Moov Pass Minutes
-  ('Moov', 'pass_internet', 'Pass 100 Mo', '100 Mo de données', 300, '1 jour', FALSE, FALSE),
-  ('Moov', 'pass_internet', 'Pass 500 Mo', '500 Mo de données', 500, '2 jours', TRUE, FALSE),
-  -- Moov Pass Appel
-  ('Moov', 'pass_appel', 'Pass Journée', 'Appels illimités Moov', 450, '1 jour', TRUE, FALSE),
-  ('Moov', 'pass_appel', 'Pass Semaine', 'Appels illimités Moov 7 jours', 1400, '7 jours', FALSE, TRUE)
-ON CONFLICT DO NOTHING;
