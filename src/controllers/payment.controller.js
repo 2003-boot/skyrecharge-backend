@@ -9,6 +9,7 @@ import db from '../config/database.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { io } from '../server.js';
 import { sendUSSD } from '../services/ussd.service.js';
+import redisClient from '../config/redis.js';
 
 const MODEM_BY_OPERATOR = {
   'Moov': 'http://192.168.9.1/',
@@ -275,20 +276,58 @@ const processUSSDAfterPayment = async (order) => {
     // Tout échec (quelle que soit la cause) devient "refunded", jamais
     // "failed" — conformément au choix produit : le client ne voit que
     // "réussi" ou "remboursé", jamais un statut d'échec brut.
-    const isTechnicalFailure = result.technical_failure === true;
+    const failureType = result.technical_failure === true
+      ? 'technical'
+      : (result.failure_type || 'other');
     const internalReason = result.error || 'Recharge échouée';
 
-    if (isTechnicalFailure) {
+    if (failureType === 'technical') {
       console.error(`⚠️ [PANNE TECHNIQUE] Commande ${order.id} — ${internalReason}`);
     } else {
-      console.error(`❌ [ÉCHEC RECHARGE] Commande ${order.id} — ${internalReason}`);
+      console.error(`❌ [ÉCHEC RECHARGE — ${failureType}] Commande ${order.id} — ${internalReason}`);
     }
 
-    await triggerRefund(order, internalReason);
+    await triggerRefund(order, internalReason, failureType);
 
   } catch (error) {
     console.error(`❌ Erreur processUSSDAfterPayment:`, error.message);
-    await triggerRefund(order, error.message);
+    await triggerRefund(order, error.message, 'technical');
+  }
+};
+
+// Message affiché au client selon la cause de l'échec — jamais de détail
+// technique interne, mais une explication utile plutôt qu'un message
+// générique quand on connaît la vraie cause.
+const REFUND_MESSAGES = {
+  technical: "Votre transaction n'a pas pu être finalisée. Le remboursement a été initié automatiquement.",
+  insufficient_balance: "Le fournisseur ne dispose pas actuellement d'assez de solde pour traiter votre demande. Vous avez été remboursé automatiquement — vous pouvez réessayer avec un montant plus petit, ou plus tard.",
+  network_issue: "Un problème de réseau chez votre opérateur a empêché la transaction. Vous avez été remboursé automatiquement — vous pouvez réessayer dans quelques instants.",
+  network_issue_throttled: "Plusieurs tentatives ont échoué pour cause de réseau opérateur. Votre remboursement est en cours de traitement par notre équipe.",
+  other: "Votre transaction n'a pas pu être finalisée. Le remboursement a été initié automatiquement.",
+};
+
+// Anti-spam : chaque remboursement cashin coûte des frais réels (~2%).
+// Si un client enchaîne les échecs "réseau opérateur" (souvent en
+// retentant la même recharge en boucle), on limite le nombre de
+// remboursements automatiques déclenchés sur une fenêtre glissante d'1h,
+// pour éviter de payer des frais à répétition sur des tentatives
+// probablement redondantes.
+const NETWORK_REFUND_LIMIT = 2; // remboursements auto autorisés par heure
+const NETWORK_REFUND_WINDOW_SECONDS = 60 * 60;
+
+const isNetworkRefundThrottled = async (userId) => {
+  const key = `network_refund_count:${userId}`;
+  try {
+    const count = await redisClient.incr(key);
+    if (count === 1) {
+      await redisClient.expire(key, NETWORK_REFUND_WINDOW_SECONDS);
+    }
+    return count > NETWORK_REFUND_LIMIT;
+  } catch (error) {
+    // Si Redis est indisponible, on ne bloque pas le remboursement —
+    // mieux vaut rembourser un peu trop que pas du tout.
+    console.error('⚠️ Impossible de vérifier le throttle remboursement réseau:', error.message);
+    return false;
   }
 };
 
@@ -298,7 +337,7 @@ const processUSSDAfterPayment = async (order) => {
 // (paiement encaissé, recharge ratée, ET remboursement automatique en
 // échec) est le pire scénario business : il nécessite une intervention
 // manuelle rapide pour ne pas perdre la confiance du client.
-const triggerRefund = async (order, internalReason) => {
+const triggerRefund = async (order, internalReason, failureType = 'other') => {
   // merchant_transaction_id doit être unique à chaque appel cashin —
   // jamais réutiliser celui du paiement d'origine.
   const refundId = `RET-${order.id}-${Date.now()}`;
@@ -315,11 +354,26 @@ const triggerRefund = async (order, internalReason) => {
        WHERE id = $2`,
       [internalReason, order.id]
     );
-    io.emit('order:refunded', {
-      orderId: order.id,
-      message: "Votre transaction n'a pas pu être finalisée. Notre équipe traite votre remboursement.",
-    });
+    io.emit('order:refunded', { orderId: order.id, message: REFUND_MESSAGES.other });
     return;
+  }
+
+  // Anti-spam sur les échecs réseau opérateur uniquement — les pannes
+  // techniques et soldes insuffisants ne sont pas la faute du client donc
+  // pas de raison de le limiter là-dessus.
+  if (failureType === 'network_issue') {
+    const throttled = await isNetworkRefundThrottled(order.user_id);
+    if (throttled) {
+      console.warn(`⏸️ [REMBOURSEMENT THROTTLÉ] Commande ${order.id} — trop de remboursements réseau récents pour user ${order.user_id}. Remboursement manuel requis.`);
+      await db.query(
+        `UPDATE orders
+         SET status = 'refunded', refund_status = 'manual_required', failure_reason = $1, updated_at = NOW()
+         WHERE id = $2`,
+        [internalReason, order.id]
+      );
+      io.emit('order:refunded', { orderId: order.id, message: REFUND_MESSAGES.network_issue_throttled });
+      return;
+    }
   }
 
   try {
@@ -347,7 +401,7 @@ const triggerRefund = async (order, internalReason) => {
 
     io.emit('order:refunded', {
       orderId: order.id,
-      message: "Votre transaction n'a pas pu être finalisée. Le remboursement a été initié automatiquement.",
+      message: REFUND_MESSAGES[failureType] || REFUND_MESSAGES.other,
     });
 
   } catch (error) {
@@ -364,10 +418,7 @@ const triggerRefund = async (order, internalReason) => {
       [internalReason, order.id]
     );
 
-    io.emit('order:refunded', {
-      orderId: order.id,
-      message: "Votre transaction n'a pas pu être finalisée. Notre équipe traite votre remboursement.",
-    });
+    io.emit('order:refunded', { orderId: order.id, message: REFUND_MESSAGES.other });
   }
 };
 
