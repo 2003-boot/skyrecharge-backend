@@ -2,7 +2,19 @@ import redisClient from '../config/redis.js';
 
 const QUEUE_PREFIX = 'ussd_queue';
 const RESULT_PREFIX = 'ussd_result:';
+const CANCELLED_PREFIX = 'ussd_cancelled:';
 const POLL_INTERVAL = 1000; // Vérifier toutes les secondes
+
+// Au-delà de ce délai sans réponse du Pi, on considère que c'est une panne
+// technique (Pi hors ligne, backend/réseau en carafe...) plutôt que
+// d'attendre indéfiniment. 180s = large marge par rapport au temps normal
+// d'une transaction USSD (quelques secondes à ~1 minute).
+const RESULT_TIMEOUT_MS = 180 * 1000;
+
+// Durée de vie de l'entrée "annulée" dans Redis — assez longue pour
+// couvrir largement le temps que le Pi mette à revenir en ligne après une
+// panne, mais pas infinie pour ne pas accumuler des clés indéfiniment.
+const CANCELLED_TTL_SECONDS = 24 * 60 * 60;
 
 // Chaque opérateur a sa propre file Redis (ussd_queue:moov, ussd_queue:orange,
 // ussd_queue:mtn...) — ça permet au worker Pi de traiter plusieurs modems en
@@ -38,12 +50,19 @@ export const sendUSSD = async (orderId, ussdCode, ussdSteps = null, modemUrl = n
   }
 };
 
-// Attendre le résultat du Pi dans Redis — sans timeout
+// Attendre le résultat du Pi dans Redis, avec un plafond de 180s.
+// Au-delà, on considère que c'est une panne technique : on blackliste la
+// commande (pour que le worker l'ignore s'il revient en ligne plus tard et
+// tombe dessus dans la file) et on renvoie un résultat "technical_failure"
+// que payment.controller.js saura distinguer d'un échec normal (réseau
+// opérateur, solde insuffisant) pour déclencher le bon message et le bon
+// type de remboursement.
 const waitForResult = (orderId) => {
   return new Promise((resolve, reject) => {
     const resultKey = `${RESULT_PREFIX}${orderId}`;
+    const startedAt = Date.now();
 
-    console.log(`⏳ Attente résultat Pi pour: ${resultKey}`);
+    console.log(`⏳ Attente résultat Pi pour: ${resultKey} (timeout ${RESULT_TIMEOUT_MS / 1000}s)`);
 
     const checkResult = async () => {
       try {
@@ -57,7 +76,22 @@ const waitForResult = (orderId) => {
           return;
         }
 
-        // Pas de timeout — on attend indéfiniment
+        if (Date.now() - startedAt >= RESULT_TIMEOUT_MS) {
+          console.error(`⏱️ Timeout: aucun résultat du Pi après ${RESULT_TIMEOUT_MS / 1000}s pour la commande ${orderId} — panne technique présumée`);
+
+          // Empêche le worker d'exécuter cette commande plus tard s'il
+          // revient en ligne après ce timeout (sinon : double perte,
+          // remboursement + recharge offerte gratuitement).
+          await redisClient.set(`${CANCELLED_PREFIX}${orderId}`, '1', { EX: CANCELLED_TTL_SECONDS });
+
+          resolve({
+            success: false,
+            technical_failure: true,
+            error: `Timeout: aucune réponse du worker après ${RESULT_TIMEOUT_MS / 1000}s`,
+          });
+          return;
+        }
+
         setTimeout(checkResult, POLL_INTERVAL);
 
       } catch (error) {

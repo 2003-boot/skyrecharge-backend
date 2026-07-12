@@ -268,19 +268,57 @@ const processUSSDAfterPayment = async (order) => {
       );
       io.emit('order:completed', { orderId: order.id, message: result.content });
       console.log(`✅ Commande ${order.id} complétée!`);
-    } else {
-      throw new Error(result.error || 'Recharge échouée');
+      return;
     }
+
+    // Tout échec (quelle que soit la cause) devient "refunded", jamais
+    // "failed" — conformément au choix produit : le client ne voit que
+    // "réussi" ou "remboursé", jamais un statut d'échec brut.
+    //
+    // ⚠️ IMPORTANT — état actuel (avant intégration de l'API cashin Babimo) :
+    // ceci ne fait QUE marquer la commande en base. Aucun argent n'est
+    // réellement renvoyé au client pour l'instant — ça viendra avec
+    // l'intégration cashin (étape 3 du plan). Ne pas dire au client qu'il
+    // a été remboursé tant que ce n'est pas vrai.
+    const isTechnicalFailure = result.technical_failure === true;
+    const internalReason = result.error || 'Recharge échouée';
+
+    if (isTechnicalFailure) {
+      console.error(`⚠️ [PANNE TECHNIQUE] Commande ${order.id} — ${internalReason}`);
+    } else {
+      console.error(`❌ [ÉCHEC RECHARGE] Commande ${order.id} — ${internalReason}`);
+    }
+    // TODO (étape 3) : déclencher ici l'appel réel à l'API cashin Babimo
+    // pour rembourser le client, une fois sa documentation intégrée.
+    console.warn(`💸 Remboursement RÉEL non encore automatisé — commande ${order.id} à rembourser manuellement pour l'instant.`);
+
+    await db.query(
+      `UPDATE orders
+       SET status = 'refunded', failure_reason = $1, updated_at = NOW()
+       WHERE id = $2`,
+      [internalReason, order.id]
+    );
+
+    io.emit('order:refunded', {
+      orderId: order.id,
+      // Message neutre côté client — jamais de détail technique, et pas
+      // encore "vous avez été remboursé" tant que ce n'est pas vrai.
+      message: "Votre transaction n'a pas pu être finalisée. Notre équipe traite votre remboursement.",
+    });
 
   } catch (error) {
     console.error(`❌ Erreur processUSSDAfterPayment:`, error.message);
+    console.warn(`💸 Remboursement RÉEL non encore automatisé — commande ${order.id} à rembourser manuellement pour l'instant.`);
     await db.query(
       `UPDATE orders
-       SET status = 'failed', failure_reason = $1, updated_at = NOW()
+       SET status = 'refunded', failure_reason = $1, updated_at = NOW()
        WHERE id = $2`,
       [error.message, order.id]
     );
-    io.emit('order:failed', { orderId: order.id, reason: error.message });
+    io.emit('order:refunded', {
+      orderId: order.id,
+      message: "Votre transaction n'a pas pu être finalisée. Notre équipe traite votre remboursement.",
+    });
   }
 };
 
