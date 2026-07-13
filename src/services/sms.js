@@ -1,7 +1,7 @@
 import axios from 'axios';
 import config from '../config/index.js';
 
-const HSMS_BASE_URL = 'https://hsms.ci/api';
+const HSMS_BASE_URL = 'https://www.hsms.ci/api';
 
 // Le token HSMS est "persistant" selon leur doc (réutilisable pour toutes
 // les requêtes) — on le récupère une fois puis on le garde en mémoire,
@@ -47,7 +47,7 @@ export const sendSMS = async (phone, message) => {
 
   const sendRequest = async (token) => {
     return axios.post(
-      `${HSMS_BASE_URL}/v2/sms/send`,
+      `${HSMS_BASE_URL}/v2/sms/send/`,
       {
         clientid: config.hsms.clientId,
         clientsecret: config.hsms.clientSecret,
