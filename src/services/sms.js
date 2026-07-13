@@ -9,7 +9,7 @@ const HSMS_BASE_URL = 'https://hsms.ci/api';
 let cachedToken = null;
 
 const fetchToken = async () => {
-  const response = await axios.post(`${HSMS_BASE_URL}/token/`, {
+  const response = await axios.post(`${HSMS_BASE_URL}/v2/sms/token/`, {
     email: config.hsms.email,
     password: config.hsms.password,
   });
@@ -47,12 +47,13 @@ export const sendSMS = async (phone, message) => {
 
   const sendRequest = async (token) => {
     return axios.post(
-      `${HSMS_BASE_URL}/envoi-sms`,
+      `${HSMS_BASE_URL}/v2/sms/send`,
       {
         clientid: config.hsms.clientId,
         clientsecret: config.hsms.clientSecret,
-        telephone,
         message,
+        telephone
+        
       },
       {
         headers: {
