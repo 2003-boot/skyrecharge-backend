@@ -135,8 +135,24 @@ export const login = async (req, res) => {
       return errorResponse(res, 'Compte introuvable', 404);
     }
 
-    // Connexion par PIN si activé et PIN fourni
-    if (user.pin_enabled && pin) {
+    // Connexion par PIN — dès que le compte a un PIN configuré, l'OTP ne
+    // doit JAMAIS être envoyé pour se connecter, qu'il soit fourni ou non
+    // dans cet appel. Le flux mobile appelle d'abord /login avec juste le
+    // numéro (pour savoir si ce compte utilise un PIN et rediriger vers le
+    // bon écran), PUIS rappelle /login avec le PIN une fois saisi. Avant ce
+    // correctif, le premier appel (sans PIN) tombait dans la branche OTP
+    // ci-dessous et envoyait un SMS inutile à chaque connexion.
+    if (user.pin_enabled) {
+      if (!pin) {
+        // On sait déjà que ce compte utilise un PIN — on informe juste le
+        // client d'aller demander le PIN, sans envoyer d'OTP.
+        return successResponse(res, {
+          phone,
+          requiresOTP: true,
+          pinEnabled: true,
+        }, 'PIN requis');
+      }
+
       const validPin = await bcrypt.compare(pin, user.pin_hash);
       if (!validPin) {
         return errorResponse(res, 'PIN incorrect', 401);
@@ -162,7 +178,9 @@ export const login = async (req, res) => {
       }, 'Connexion réussie');
     }
 
-    // Pas de PIN → envoyer un OTP
+    // Compte sans PIN configuré — cas exceptionnel uniquement (ex:
+    // inscription interrompue avant l'étape pin-setup obligatoire). Seul
+    // cas restant où l'OTP est envoyé au login.
     const otp = generateOTP(6);
     const expiresAt = getOTPExpiry(10);
 
