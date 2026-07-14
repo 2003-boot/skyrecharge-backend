@@ -36,29 +36,6 @@ CREATE TABLE IF NOT EXISTS admins (
 );
 
 -- =============================================
--- TABLE: agents
--- =============================================
-CREATE TABLE IF NOT EXISTS agents (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  name VARCHAR(100) NOT NULL,
-  phone VARCHAR(20) UNIQUE NOT NULL,
-  password_hash VARCHAR(255) NOT NULL,
-  fcm_token TEXT,
-  balance INTEGER DEFAULT 0,
-  score INTEGER DEFAULT 100,
-  total_missions INTEGER DEFAULT 0,
-  successful_missions INTEGER DEFAULT 0,
-  failed_missions INTEGER DEFAULT 0,
-  status VARCHAR(20) DEFAULT 'active'
-    CHECK (status IN ('active', 'suspended', 'blocked')),
-  is_online BOOLEAN DEFAULT FALSE,
-  commission_rate DECIMAL(5,2) DEFAULT 40.00,
-  created_by UUID REFERENCES admins(id),
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-);
-
--- =============================================
 -- TABLE: operator_offers (offres pass par opérateur)
 -- =============================================
 CREATE TABLE IF NOT EXISTS operator_offers (
@@ -103,7 +80,6 @@ CREATE TABLE IF NOT EXISTS orders (
     CHECK (status IN (
       'pending_payment',
       'queued',
-      'assigned',
       'in_progress',
       'completed',
       'failed',
@@ -127,69 +103,6 @@ CREATE TABLE IF NOT EXISTS orders (
 );
 
 -- =============================================
--- TABLE: agent_missions
--- =============================================
-CREATE TABLE IF NOT EXISTS agent_missions (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  order_id UUID REFERENCES orders(id) ON DELETE CASCADE,
-  agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
-  status VARCHAR(20) DEFAULT 'pending'
-    CHECK (status IN (
-      'pending',
-      'assigned',
-      'accepted',
-      'in_progress',
-      'completed',
-      'failed',
-      'timeout',
-      'refused'
-    )),
-  assigned_at TIMESTAMP DEFAULT NOW(),
-  accepted_at TIMESTAMP,
-  completed_at TIMESTAMP,
-  deadline_at TIMESTAMP,
-  processing_time_seconds INTEGER,
-  attempt_number INTEGER DEFAULT 1,
-  failure_reason TEXT,
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-);
-
--- =============================================
--- TABLE: agent_score_history
--- =============================================
-CREATE TABLE IF NOT EXISTS agent_score_history (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  agent_id UUID REFERENCES agents(id) ON DELETE CASCADE,
-  mission_id UUID REFERENCES agent_missions(id) ON DELETE SET NULL,
-  action VARCHAR(50) NOT NULL,
-  points INTEGER NOT NULL,
-  score_before INTEGER NOT NULL,
-  score_after INTEGER NOT NULL,
-  note TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
--- =============================================
--- TABLE: agent_earnings
--- =============================================
-CREATE TABLE IF NOT EXISTS agent_earnings (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  agent_id UUID REFERENCES agents(id) ON DELETE CASCADE,
-  mission_id UUID REFERENCES agent_missions(id) ON DELETE SET NULL,
-  order_id UUID REFERENCES orders(id) ON DELETE SET NULL,
-  amount INTEGER NOT NULL,
-  bonus INTEGER DEFAULT 0,
-  commission_rate DECIMAL(5,2) NOT NULL,
-  period_week INTEGER,
-  period_month INTEGER,
-  period_year INTEGER,
-  paid BOOLEAN DEFAULT FALSE,
-  paid_at TIMESTAMP,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
--- =============================================
 -- TABLE: otp_codes
 -- =============================================
 CREATE TABLE IF NOT EXISTS otp_codes (
@@ -207,7 +120,7 @@ CREATE TABLE IF NOT EXISTS otp_codes (
 CREATE TABLE IF NOT EXISTS notifications (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   recipient_type VARCHAR(10) NOT NULL
-    CHECK (recipient_type IN ('user', 'agent', 'admin')),
+    CHECK (recipient_type IN ('user', 'admin')),
   recipient_id UUID NOT NULL,
   title VARCHAR(200) NOT NULL,
   body TEXT NOT NULL,
@@ -232,11 +145,6 @@ CREATE TABLE IF NOT EXISTS config (
 CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_agent_missions_order_id ON agent_missions(order_id);
-CREATE INDEX IF NOT EXISTS idx_agent_missions_agent_id ON agent_missions(agent_id);
-CREATE INDEX IF NOT EXISTS idx_agent_missions_status ON agent_missions(status);
-CREATE INDEX IF NOT EXISTS idx_agent_score_history_agent_id ON agent_score_history(agent_id);
-CREATE INDEX IF NOT EXISTS idx_agent_earnings_agent_id ON agent_earnings(agent_id);
 CREATE INDEX IF NOT EXISTS idx_otp_codes_phone ON otp_codes(phone);
 CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient_id, recipient_type);
 
@@ -248,15 +156,5 @@ CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipien
 INSERT INTO config (key, value, description) VALUES
   ('credit_fixed_fee', '50', 'Frais fixes en FCFA pour le crédit de communication'),
   ('pass_fee_percent', '10', 'Pourcentage de frais sur les pass'),
-  ('agent_commission_rate', '40', 'Pourcentage de commission des agents (phase 1)'),
-  ('min_credit_amount', '200', 'Montant minimum de crédit en FCFA'),
-  ('mission_accept_timeout', '120', 'Délai en secondes pour accepter une mission'),
-  ('mission_process_timeout', '180', 'Délai max en secondes pour traiter une mission'),
-  ('score_threshold_suspend', '0', 'Score en dessous duquel l agent est suspendu'),
-  ('score_fast_1min', '10', 'Points gagnés pour traitement en moins d 1 min'),
-  ('score_fast_2min', '5', 'Points gagnés pour traitement entre 1 et 2 min'),
-  ('score_fast_3min', '2', 'Points gagnés pour traitement entre 2 et 3 min'),
-  ('score_penalty_error', '-20', 'Points perdus pour une erreur'),
-  ('score_penalty_refuse', '-5', 'Points perdus pour un refus de mission'),
-  ('score_penalty_timeout', '-5', 'Points perdus pour un timeout')
+  ('min_credit_amount', '200', 'Montant minimum de crédit en FCFA')
 ON CONFLICT (key) DO NOTHING;

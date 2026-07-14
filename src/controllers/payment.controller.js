@@ -14,14 +14,13 @@ import redisClient from '../config/redis.js';
 const MODEM_BY_OPERATOR = {
   'Moov': 'http://192.168.9.1/',
   'Orange': 'http://192.168.8.1/',
-  'MTN': 'http://192.168.10.1/',
 };
 
 const detectOperator = (phone) => {
   const clean = phone.replace('+225', '').replace(/\s/g, '');
   if (clean.startsWith('07') || clean.startsWith('08') || clean.startsWith('09')) return 'Orange';
   if (clean.startsWith('01') || clean.startsWith('02') || clean.startsWith('03')) return 'Moov';
-  if (clean.startsWith('05') || clean.startsWith('06')) return 'MTN';
+  if (clean.startsWith('05') || clean.startsWith('06') || clean.startsWith('04')) return 'MTN';
   return 'Moov';
 };
 
@@ -252,10 +251,10 @@ const processUSSDAfterPayment = async (order) => {
           confirmation: '{secret}',
           secret_code: '2580',
         };
-      } else if (operator === 'MTN') {
-        ussdCode = `*155*${phone}*${order.amount}#`;
-      } else {
+      } else if (operator === 'Moov') {
         ussdCode = `*410*${phone}*${order.amount}*2003#`;
+      } else {
+        throw new Error(`Opérateur non supporté: ${operator}`);
       }
     }
 

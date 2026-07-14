@@ -1,5 +1,4 @@
 import 'dotenv/config';
-import bcrypt from 'bcryptjs';
 import pg from 'pg';
 
 const { Pool } = pg;
@@ -12,19 +11,13 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD,
 });
 
+// NB : le seul seed qui existait ici (agent de test) a été retiré avec le
+// système agent humain. Ce fichier ne fait plus rien pour l'instant —
+// à compléter avec de vraies données de test si besoin (ex: offres
+// opérateurs, admin de test...).
 const seed = async () => {
   try {
-    // Agent de test
-    const agentPasswordHash = await bcrypt.hash('Agent@2026!', 12);
-    await pool.query(
-    `INSERT INTO agents (name, phone, password_hash, balance, score)
-    VALUES ($1, $2, $3, $4, $5)
-    ON CONFLICT (phone) DO NOTHING`,
-    ['Agent Test', '+22507000001', agentPasswordHash, 10000, 100]
-    );
-    console.log('✅ Agent test créé !');
-    console.log('📱 Téléphone: +22507000001');
-    console.log('🔑 Mot de passe: Agent@2026!');
+    console.log('ℹ️  Aucun seed à exécuter pour le moment.');
   } catch (error) {
     console.error('❌ Erreur seed:', error.message);
   } finally {
