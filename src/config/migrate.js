@@ -26,7 +26,6 @@ const migrate = async () => {
     await pool.query(sql);
     console.log('✅ Migration terminée avec succès !');
     console.log('✅ Tables créées : users, admins, agents, orders, agent_missions,');
-    console.log('   agent_score_history, agent_earnings, otp_codes, notifications, config');
     console.log('✅ Données initiales insérées (config + offres opérateurs)');
   } catch (error) {
     console.error('❌ Erreur de migration:', error.message);
