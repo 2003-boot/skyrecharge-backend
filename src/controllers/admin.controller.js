@@ -5,6 +5,9 @@ import { initiateCashin, PAYMENT_METHODS } from '../services/babimo.service.js';
 import {
   getStatsSummary,
   getSupplierBalances,
+  getRevenueTimeseries,
+  getOrdersForExport,
+  getPeriodRange,
 } from '../services/stats.service.js';
 
 // ─── GET /api/admin/stats?period=day|week|month ────────────────────────────
@@ -19,6 +22,63 @@ export const getStats = async (req, res) => {
   } catch (error) {
     console.error('Erreur getStats:', error);
     return errorResponse(res, 'Erreur lors du calcul des statistiques', 500);
+  }
+};
+
+// ─── GET /api/admin/stats/timeseries?days=14 ───────────────────────────────
+export const getTimeseries = async (req, res) => {
+  try {
+    const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 14));
+    const points = await getRevenueTimeseries(days);
+    return successResponse(res, { points }, 'Série temporelle récupérée');
+  } catch (error) {
+    console.error('Erreur getTimeseries:', error);
+    return errorResponse(res, 'Erreur lors du calcul de la série temporelle', 500);
+  }
+};
+
+// ─── GET /api/admin/export/orders.csv?period=day|week|month ───────────────
+const escapeCSV = (value) => {
+  if (value === null || value === undefined) return '';
+  const str = String(value);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+};
+
+export const exportOrdersCSV = async (req, res) => {
+  try {
+    const period = ['day', 'week', 'month'].includes(req.query.period)
+      ? req.query.period
+      : 'month';
+    const { start, end } = getPeriodRange(period);
+    const orders = await getOrdersForExport(start, end);
+
+    const headers = [
+      'ID', 'Date création', 'Date complétion', 'Type', 'Opérateur',
+      'Client', 'Téléphone client', 'Bénéficiaire',
+      'Montant', 'Frais', 'Total', 'Statut',
+    ];
+    const rows = orders.map(o => [
+      o.id, o.created_at, o.completed_at || '', o.order_type, o.operator || '',
+      o.user_first_name || '', o.user_phone || '', o.beneficiary_phone,
+      o.amount, o.fees, o.total_amount, o.status,
+    ]);
+
+    const csv = [headers, ...rows]
+      .map(row => row.map(escapeCSV).join(','))
+      .join('\n');
+
+    const filename = `skyrecharge-transactions-${period}-${new Date().toISOString().slice(0, 10)}.csv`;
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    // BOM UTF-8 — évite les accents cassés à l'ouverture dans Excel
+    return res.send('\uFEFF' + csv);
+  } catch (error) {
+    console.error('Erreur exportOrdersCSV:', error);
+    return errorResponse(res, 'Erreur lors de la génération de l\'export', 500);
   }
 };
 

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getStats,
+  getTimeseries,
   getBalances,
   getRecentOrders,
   getUsersCount,
@@ -9,6 +10,7 @@ import {
   createTransfer,
   getTransfersHistory,
   transferWebhook,
+  exportOrdersCSV,
 } from '../controllers/admin.controller.js';
 import { authenticateAdmin } from '../middlewares/auth.js';
 
@@ -21,9 +23,11 @@ router.use(authenticateAdmin);
 
 // Dashboard
 router.get('/stats', getStats);
+router.get('/stats/timeseries', getTimeseries);
 router.get('/balances', getBalances);
 router.get('/orders/recent', getRecentOrders);
 router.get('/users/count', getUsersCount);
+router.get('/export/orders.csv', exportOrdersCSV);
 
 // Messages HSMS
 router.post('/messages', sendMessage);

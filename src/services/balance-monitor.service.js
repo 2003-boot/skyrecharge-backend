@@ -1,12 +1,25 @@
 import redisClient from '../config/redis.js';
+import db from '../config/database.js';
 import { sendSMS } from './sms.js';
 
 const BALANCE_KEY_PREFIX = 'modem_balance:';
 const ALERT_COOLDOWN_KEY_PREFIX = 'balance_alert_sent:';
 
-// Seuil d'alerte pour la phase de test (amis et famille) — à ajuster une
-// fois en usage réel avec plus de volume.
-const BALANCE_THRESHOLD = 5000;
+// Seuil d'alerte — lu depuis la table config (clé balance_alert_threshold,
+// éditable sans redéploiement) plutôt que figé en dur, pour rester
+// cohérent avec le seuil utilisé par le dashboard admin (même définition
+// de "solde bas" partout). 5000 en secours si la config est indisponible.
+const DEFAULT_BALANCE_THRESHOLD = 5000;
+
+const getBalanceThreshold = async () => {
+  try {
+    const result = await db.query(`SELECT value FROM config WHERE key = 'balance_alert_threshold'`);
+    const parsed = parseFloat(result.rows[0]?.value);
+    return Number.isFinite(parsed) ? parsed : DEFAULT_BALANCE_THRESHOLD;
+  } catch {
+    return DEFAULT_BALANCE_THRESHOLD;
+  }
+};
 
 // Anti-spam : une fois alerté, on ne rappelle pas le fournisseur avant
 // 6h, même si le solde reste bas entre-temps.
@@ -37,7 +50,8 @@ const checkOperatorBalance = async (operator) => {
     if (!raw) return; // Pas encore de solde connu pour cet opérateur
 
     const { balance, checked_at } = JSON.parse(raw);
-    if (typeof balance !== 'number' || balance >= BALANCE_THRESHOLD) return;
+    const threshold = await getBalanceThreshold();
+    if (typeof balance !== 'number' || balance >= threshold) return;
 
     const cooldownKey = `${ALERT_COOLDOWN_KEY_PREFIX}${operator}`;
     const alreadyAlerted = await redisClient.get(cooldownKey);
@@ -67,7 +81,7 @@ const checkOperatorBalance = async (operator) => {
 };
 
 export const startBalanceMonitor = () => {
-  console.log(`💰 Monitoring de solde démarré (seuil: ${BALANCE_THRESHOLD} FCFA, vérification toutes les ${CHECK_INTERVAL_MS / 60000} min)`);
+  console.log(`💰 Monitoring de solde démarré (seuil configurable via 'balance_alert_threshold', vérification toutes les ${CHECK_INTERVAL_MS / 60000} min)`);
   setInterval(() => {
     checkOperatorBalance('moov');
     checkOperatorBalance('orange');

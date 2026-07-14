@@ -193,5 +193,6 @@ INSERT INTO config (key, value, description) VALUES
   ('app_fee_percent', '10', 'Pourcentage de frais SkyRecharge sur chaque transaction'),
   ('babimo_fee_percent', '5', 'Pourcentage de frais prélevé par Babimo (phase de test)'),
   ('moov_bonus_percent', '4.5', 'Pourcentage de bonus Moov, versé par tranche de 10 000f'),
-  ('moov_bonus_tranche', '10000', 'Montant du palier de recharge Moov déclenchant le bonus')
+  ('moov_bonus_tranche', '10000', 'Montant du palier de recharge Moov déclenchant le bonus'),
+  ('balance_alert_threshold', '5000', 'Seuil (FCFA) en dessous duquel un solde EVD est considéré bas — SMS fournisseur + alerte dashboard')
 ON CONFLICT (key) DO NOTHING;

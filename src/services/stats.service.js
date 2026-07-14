@@ -8,6 +8,7 @@ const DEFAULTS = {
   babimo_fee_percent: 5,
   moov_bonus_percent: 4.5,
   moov_bonus_tranche: 10000,
+  balance_alert_threshold: 5000,
 };
 
 const getConfigNumber = async (key) => {
@@ -165,7 +166,78 @@ export const getSupplierBalances = async () => {
     readBalance('modem_balance_benefit:orange'),
   ]);
 
-  return { evdOrange, evdMoov, benefitOrange };
+  // Même seuil que balance-monitor.service.js (clé config partagée) —
+  // uniquement pertinent pour les soldes EVD (servent aux recharges), pas
+  // pour le bénéfice Orange qui n'est jamais dépensé.
+  const threshold = await getConfigNumber('balance_alert_threshold');
+  const withLowFlag = (reading) => ({
+    ...reading,
+    isLow: reading.balance !== null && reading.balance < threshold,
+  });
+
+  return {
+    evdOrange: withLowFlag(evdOrange),
+    evdMoov: withLowFlag(evdMoov),
+    benefitOrange,
+    threshold,
+  };
+};
+
+// ─── Série temporelle CA/marge (courbe d'évolution) ────────────────────────
+// Un point par jour sur les N derniers jours (aujourd'hui inclus).
+export const getRevenueTimeseries = async (days = 14) => {
+  const result = await db.query(
+    `SELECT
+       DATE(completed_at) AS date,
+       COALESCE(SUM(total_amount), 0) AS revenue,
+       COALESCE(SUM(fees), 0) AS app_fees
+     FROM orders
+     WHERE status = 'completed'
+       AND completed_at >= NOW() - ($1 || ' days')::interval
+     GROUP BY DATE(completed_at)
+     ORDER BY date ASC`,
+    [days]
+  );
+
+  const babimoFeePercent = await getConfigNumber('babimo_fee_percent');
+  const byDate = {};
+  result.rows.forEach(row => {
+    const revenue = Number(row.revenue);
+    const appFees = Number(row.app_fees);
+    const babimoFees = Math.round(revenue * (babimoFeePercent / 100));
+    byDate[row.date.toISOString().slice(0, 10)] = {
+      revenue,
+      appMargin: appFees - babimoFees,
+    };
+  });
+
+  // Compléter les jours sans transaction avec des zéros — un trou dans le
+  // graphe serait ambigu (pas de donnée vs vraiment zéro).
+  const points = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    points.push({ date: key, ...(byDate[key] || { revenue: 0, appMargin: 0 }) });
+  }
+
+  return points;
+};
+
+// ─── Données brutes pour l'export CSV (routes/orders.controller.js) ───────
+export const getOrdersForExport = async (start, end) => {
+  const result = await db.query(
+    `SELECT o.id, o.order_type, o.beneficiary_phone, o.operator,
+            o.amount, o.fees, o.total_amount, o.status,
+            o.created_at, o.completed_at,
+            u.first_name AS user_first_name, u.phone AS user_phone
+     FROM orders o
+     LEFT JOIN users u ON u.id = o.user_id
+     WHERE o.created_at >= $1 AND o.created_at < $2
+     ORDER BY o.created_at DESC`,
+    [start, end]
+  );
+  return result.rows;
 };
 
 // ─── Résumé complet pour une période (endpoint /admin/stats) ──────────────
