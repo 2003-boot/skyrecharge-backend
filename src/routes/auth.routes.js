@@ -3,6 +3,7 @@ import {
   register,
   verifyOTP,
   login,
+  adminLogin,
   refreshToken,
   logout,
 } from '../controllers/auth.controller.js';
@@ -17,5 +18,7 @@ router.post('/login', authLimiter, login);
 router.post('/refresh', refreshToken);
 router.post('/logout', logout);
 
+// Admin
+router.post('/admin/login', authLimiter, adminLogin);
 
 export default router;

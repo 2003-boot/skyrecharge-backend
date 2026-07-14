@@ -3,6 +3,7 @@ import authRoutes from './auth.routes.js';
 import orderRoutes from './order.routes.js';
 import userRoutes from './user.routes.js';
 import paymentRoutes from './payment.routes.js';
+import adminRoutes from './admin.routes.js';
 
 const router = Router();
 
@@ -21,5 +22,6 @@ router.use('/auth', authRoutes);
 router.use('/orders', orderRoutes);
 router.use('/users', userRoutes);
 router.use('/payments', paymentRoutes);
+router.use('/admin', adminRoutes);
 
 export default router;

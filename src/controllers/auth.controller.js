@@ -208,6 +208,46 @@ export const login = async (req, res) => {
   }
 };
 
+// ─── ADMIN ────────────────────────────────────────
+
+// POST /api/auth/admin/login
+export const adminLogin = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return errorResponse(res, 'Email et mot de passe requis', 400);
+    }
+
+    const adminResult = await db.query(
+      'SELECT * FROM admins WHERE email = $1 AND is_active = TRUE',
+      [email]
+    );
+
+    const admin = adminResult.rows[0];
+    if (!admin) {
+      return errorResponse(res, 'Identifiants incorrects', 401);
+    }
+
+    const validPassword = await bcrypt.compare(password, admin.password_hash);
+    if (!validPassword) {
+      return errorResponse(res, 'Identifiants incorrects', 401);
+    }
+
+    const accessToken = generateAccessToken({ id: admin.id, role: 'admin' });
+    const refreshToken = generateRefreshToken({ id: admin.id, role: 'admin' });
+
+    return successResponse(res, {
+      admin: { id: admin.id, name: admin.name, email: admin.email },
+      accessToken,
+      refreshToken,
+    }, 'Connexion réussie');
+  } catch (error) {
+    console.error('Erreur adminLogin:', error);
+    return errorResponse(res, 'Erreur lors de la connexion', 500);
+  }
+};
+
 // POST /api/auth/refresh
 export const refreshToken = async (req, res) => {
   try {

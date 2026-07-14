@@ -140,6 +140,37 @@ CREATE TABLE IF NOT EXISTS config (
 );
 
 -- =============================================
+-- TABLE: admin_messages (dashboard admin — messages HSMS)
+-- =============================================
+CREATE TABLE IF NOT EXISTS admin_messages (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  admin_id UUID REFERENCES admins(id),
+  target_type VARCHAR(10) NOT NULL
+    CHECK (target_type IN ('all', 'single')),
+  target_phone VARCHAR(20),
+  message TEXT NOT NULL,
+  total_sent INTEGER DEFAULT 0,
+  total_failed INTEGER DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- =============================================
+-- TABLE: supplier_transfers (dashboard admin — transferts manuels fournisseurs)
+-- =============================================
+CREATE TABLE IF NOT EXISTS supplier_transfers (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  admin_id UUID REFERENCES admins(id),
+  supplier_phone VARCHAR(20) NOT NULL,
+  amount INTEGER NOT NULL,
+  payment_method VARCHAR(20) NOT NULL
+    CHECK (payment_method IN ('wave', 'orange_money', 'mtn_money', 'moov_money')),
+  babimo_transaction_id VARCHAR(255),
+  status VARCHAR(20) DEFAULT 'pending'
+    CHECK (status IN ('pending', 'completed', 'failed')),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- =============================================
 -- INDEX pour les performances
 -- =============================================
 CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
@@ -147,6 +178,8 @@ CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_otp_codes_phone ON otp_codes(phone);
 CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient_id, recipient_type);
+CREATE INDEX IF NOT EXISTS idx_admin_messages_created_at ON admin_messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_supplier_transfers_created_at ON supplier_transfers(created_at DESC);
 
 -- =============================================
 -- DONNÉES INITIALES
@@ -156,5 +189,9 @@ CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipien
 INSERT INTO config (key, value, description) VALUES
   ('credit_fixed_fee', '50', 'Frais fixes en FCFA pour le crédit de communication'),
   ('pass_fee_percent', '10', 'Pourcentage de frais sur les pass'),
-  ('min_credit_amount', '200', 'Montant minimum de crédit en FCFA')
+  ('min_credit_amount', '200', 'Montant minimum de crédit en FCFA'),
+  ('app_fee_percent', '10', 'Pourcentage de frais SkyRecharge sur chaque transaction'),
+  ('babimo_fee_percent', '5', 'Pourcentage de frais prélevé par Babimo (phase de test)'),
+  ('moov_bonus_percent', '4.5', 'Pourcentage de bonus Moov, versé par tranche de 10 000f'),
+  ('moov_bonus_tranche', '10000', 'Montant du palier de recharge Moov déclenchant le bonus')
 ON CONFLICT (key) DO NOTHING;
