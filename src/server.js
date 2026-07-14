@@ -10,7 +10,6 @@ import config from './config/index.js';
 import routes from './routes/index.js';
 import { errorHandler, notFound } from './middlewares/errorHandler.js';
 import { apiLimiter } from './middlewares/rateLimiter.js';
-import { processQueuedOrders } from './services/queue.service.js';
 import { startBalanceMonitor } from './services/balance-monitor.service.js';
 
 const app = express();
@@ -66,8 +65,6 @@ httpServer.listen(config.port, () => {
   console.log('================================');
 });
 
-// Traiter les commandes en attente au démarrage
-setTimeout(processQueuedOrders, 2000);
 
 // Surveillance du solde des modems (alertes SMS fournisseurs)
 startBalanceMonitor();
