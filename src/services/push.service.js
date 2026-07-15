@@ -20,7 +20,7 @@ const sendExpoPush = async (expoPushToken, title, body, data = {}) => {
   // (fcm_fallback_notification_channel) qui a le popup à l'écran DÉSACTIVÉ
   // par défaut. Sans cette ligne, la notif arrive (visible dans le tiroir)
   // mais sans jamais de popup ni de son.
-  const message = { to: expoPushToken, sound: 'default', title, body, data, channelId: 'default' };
+  const message = { to: expoPushToken, sound: 'sky_chime.wav', title, body, data, channelId: 'default' };
 
   try {
     const tickets = await expo.sendPushNotificationsAsync([message]);
@@ -77,7 +77,7 @@ export const broadcastPush = async (title, body, data = {}) => {
     const chunk = result.rows.slice(i, i + CHUNK_SIZE);
     const messages = chunk
       .filter(u => Expo.isExpoPushToken(u.fcm_token))
-      .map(u => ({ to: u.fcm_token, sound: 'default', title, body, data, channelId: 'default' }));
+      .map(u => ({ to: u.fcm_token, sound: 'sky_chime.wav', title, body, data, channelId: 'default' }));
 
     // La notif est enregistrée en base pour chaque utilisateur, même ceux
     // dont le token s'avérerait invalide au moment de l'envoi -- ils la
