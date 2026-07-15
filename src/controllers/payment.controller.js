@@ -10,6 +10,7 @@ import { successResponse, errorResponse } from '../utils/response.js';
 import { io } from '../server.js';
 import { sendUSSD } from '../services/ussd.service.js';
 import redisClient from '../config/redis.js';
+import { sendPushToUser } from '../services/push.service.js';
 
 const MODEM_BY_OPERATOR = {
   'Moov': 'http://192.168.9.1/',
@@ -269,6 +270,12 @@ const processUSSDAfterPayment = async (order) => {
       );
       io.emit('order:completed', { orderId: order.id, message: result.content });
       console.log(`✅ Commande ${order.id} complétée!`);
+      sendPushToUser(
+        order.user_id,
+        'Recharge réussie ✅',
+        `Votre recharge de ${order.total_amount.toLocaleString('fr-FR')} F a bien été effectuée.`,
+        { orderId: order.id, type: 'order_completed' }
+      ).catch(err => console.error('⚠️ Push order:completed non envoyé:', err.message));
       return;
     }
 
@@ -350,6 +357,18 @@ const isNetworkRefundThrottled = async (userId) => {
 // (paiement encaissé, recharge ratée, ET remboursement automatique en
 // échec) est le pire scénario business : il nécessite une intervention
 // manuelle rapide pour ne pas perdre la confiance du client.
+// Notification push commune aux 4 branches de remboursement ci-dessous --
+// évite de dupliquer le même appel (et le même risque d'oubli) à chaque
+// point de sortie de triggerRefund.
+const notifyRefunded = (order, customerMessage) => {
+  sendPushToUser(
+    order.user_id,
+    'Commande remboursée 💸',
+    customerMessage,
+    { orderId: order.id, type: 'order_refunded' }
+  ).catch(err => console.error('⚠️ Push order:refunded non envoyé:', err.message));
+};
+
 const triggerRefund = async (order, internalReason, failureType = 'other') => {
   // merchant_transaction_id doit être unique à chaque appel cashin —
   // jamais réutiliser celui du paiement d'origine.
@@ -368,6 +387,7 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
       [internalReason, REFUND_MESSAGES_MANUAL[failureType] || REFUND_MESSAGES_MANUAL.other, order.id]
     );
     io.emit('order:refunded', { orderId: order.id, refundStatus: 'failed' });
+    notifyRefunded(order, REFUND_MESSAGES_MANUAL[failureType] || REFUND_MESSAGES_MANUAL.other);
     return;
   }
 
@@ -385,6 +405,7 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
         [internalReason, REFUND_MESSAGES_MANUAL.network_issue_throttled, order.id]
       );
       io.emit('order:refunded', { orderId: order.id, refundStatus: 'manual_required' });
+      notifyRefunded(order, REFUND_MESSAGES_MANUAL.network_issue_throttled);
       return;
     }
   }
@@ -414,6 +435,7 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
     );
 
     io.emit('order:refunded', { orderId: order.id, refundStatus: 'pending' });
+    notifyRefunded(order, REFUND_MESSAGES[failureType] || REFUND_MESSAGES.other);
 
   } catch (error) {
     // L'appel cashin lui-même a échoué (API Babimo indisponible, solde
@@ -430,6 +452,7 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
     );
 
     io.emit('order:refunded', { orderId: order.id, refundStatus: 'failed' });
+    notifyRefunded(order, REFUND_MESSAGES_MANUAL[failureType] || REFUND_MESSAGES_MANUAL.other);
   }
 };
 

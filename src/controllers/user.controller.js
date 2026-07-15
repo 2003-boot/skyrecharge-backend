@@ -38,3 +38,26 @@ export const updateProfile = async (req, res) => {
     return errorResponse(res, 'Erreur mise à jour profil', 500);
   }
 };
+
+// ─── POST /api/users/push-token ─────────────────────────────────────────────
+// Appelé automatiquement par l'app au démarrage (une fois la permission
+// notifications accordée) -- pas une action utilisateur explicite, d'où
+// un endpoint dédié plutôt que de le glisser dans updateProfile.
+export const registerPushToken = async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      return errorResponse(res, 'Token requis', 400);
+    }
+
+    await db.query(
+      `UPDATE users SET fcm_token = $1, updated_at = NOW() WHERE id = $2`,
+      [token, req.user.id]
+    );
+
+    return successResponse(res, {}, 'Token enregistré');
+  } catch (error) {
+    console.error('Erreur registerPushToken:', error);
+    return errorResponse(res, "Erreur lors de l'enregistrement du token", 500);
+  }
+};

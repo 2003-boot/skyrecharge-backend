@@ -7,6 +7,7 @@ import {
   getUsersCount,
   sendMessage,
   getMessagesHistory,
+  sendPushNotification,
   createTransfer,
   getTransfersHistory,
   transferWebhook,
@@ -40,6 +41,9 @@ router.get('/export/orders.csv', exportOrdersCSV);
 // Messages HSMS
 router.post('/messages', sendMessage);
 router.get('/messages/history', getMessagesHistory);
+
+// Notifications push
+router.post('/push', sendPushNotification);
 
 // Transferts fournisseurs (cashin Babimo)
 router.post('/transfers', createTransfer);

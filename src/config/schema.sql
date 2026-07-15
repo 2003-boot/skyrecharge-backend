@@ -145,14 +145,22 @@ CREATE TABLE IF NOT EXISTS config (
 CREATE TABLE IF NOT EXISTS admin_messages (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   admin_id UUID REFERENCES admins(id),
+  channel VARCHAR(10) NOT NULL DEFAULT 'sms'
+    CHECK (channel IN ('sms', 'push')),
   target_type VARCHAR(10) NOT NULL
     CHECK (target_type IN ('all', 'single')),
   target_phone VARCHAR(20),
+  title TEXT,
   message TEXT NOT NULL,
   total_sent INTEGER DEFAULT 0,
   total_failed INTEGER DEFAULT 0,
   created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- La table peut déjà exister depuis avant l'ajout du canal push --
+-- CREATE TABLE IF NOT EXISTS ne modifie pas une table déjà présente.
+ALTER TABLE admin_messages ADD COLUMN IF NOT EXISTS channel VARCHAR(10) NOT NULL DEFAULT 'sms';
+ALTER TABLE admin_messages ADD COLUMN IF NOT EXISTS title TEXT;
 
 -- =============================================
 -- TABLE: supplier_transfers (dashboard admin — transferts manuels fournisseurs)

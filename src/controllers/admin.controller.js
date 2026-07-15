@@ -2,6 +2,7 @@ import db from '../config/database.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { sendSMS } from '../services/sms.js';
 import { initiateCashin, PAYMENT_METHODS } from '../services/babimo.service.js';
+import { sendPushToUser, broadcastPush } from '../services/push.service.js';
 import {
   getStatsSummary,
   getSupplierBalances,
@@ -97,9 +98,6 @@ export const getMaintenanceMode = async (req, res) => {
 
 // ─── POST /api/admin/maintenance ────────────────────────────────────────────
 // body: { enabled: boolean }
-// NB: l'envoi automatique d'une notification push aux utilisateurs à
-// l'activation n'est pas encore branché ici — dépend de l'intégration
-// des notifications push, pas encore construite à ce stade du projet.
 export const setMaintenanceMode = async (req, res) => {
   try {
     const { enabled } = req.body;
@@ -112,6 +110,17 @@ export const setMaintenanceMode = async (req, res) => {
        ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
       [String(enabled)]
     );
+
+    // Prévient les utilisateurs uniquement à l'ACTIVATION -- à la
+    // désactivation, ils s'en rendent compte tout seuls en rouvrant l'app,
+    // pas besoin de les notifier deux fois pour un seul événement.
+    if (enabled) {
+      broadcastPush(
+        'Maintenance en cours',
+        "Notre application est en maintenance. Vous recevrez une notification lorsqu'elle sera à nouveau disponible.",
+        { type: 'maintenance' }
+      ).catch(err => console.error('⚠️ Push maintenance non envoyé:', err.message));
+    }
 
     return successResponse(res, { enabled }, enabled ? 'Maintenance activée' : 'Maintenance désactivée');
   } catch (error) {
@@ -245,12 +254,81 @@ const dispatchMessage = async (record, target, phone, message) => {
   console.log(`📨 Message ${record.id} — envoyé: ${sent}, échoué: ${failed}`);
 };
 
+// ─── POST /api/admin/push ───────────────────────────────────────────────────
+// body: { target: 'all' | 'single', phone?, title, body }
+// Même logique que sendMessage (SMS), sur le canal push -- utilise
+// sendPushToUser/broadcastPush qui enregistrent aussi la notif dans la
+// table `notifications` (visible dans l'écran notifications.tsx côté app).
+export const sendPushNotification = async (req, res) => {
+  try {
+    const { target, phone, title, body } = req.body;
+
+    if (!target || !['all', 'single'].includes(target)) {
+      return errorResponse(res, 'target doit être "all" ou "single"', 400);
+    }
+    if (!title || !title.trim() || !body || !body.trim()) {
+      return errorResponse(res, 'Titre et message requis', 400);
+    }
+    if (target === 'single' && !phone) {
+      return errorResponse(res, 'Numéro requis pour un envoi ciblé', 400);
+    }
+
+    const insertResult = await db.query(
+      `INSERT INTO admin_messages (admin_id, channel, target_type, target_phone, title, message)
+       VALUES ($1, 'push', $2, $3, $4, $5)
+       RETURNING *`,
+      [req.admin.id, target, target === 'single' ? phone : null, title.trim(), body.trim()]
+    );
+    const record = insertResult.rows[0];
+
+    successResponse(res, { message: record }, 'Envoi lancé', 202);
+
+    dispatchPush(record, target, phone, title.trim(), body.trim()).catch(err => {
+      console.error('Erreur dispatchPush:', err);
+    });
+  } catch (error) {
+    console.error('Erreur sendPushNotification:', error);
+    return errorResponse(res, "Erreur lors de l'envoi de la notification", 500);
+  }
+};
+
+const dispatchPush = async (record, target, phone, title, body) => {
+  let sent = 0;
+  let failed = 0;
+
+  if (target === 'single') {
+    const userResult = await db.query(`SELECT id FROM users WHERE phone = $1`, [phone]);
+    const user = userResult.rows[0];
+    if (!user) {
+      failed = 1;
+    } else {
+      const result = await sendPushToUser(user.id, title, body, { type: 'admin_push' });
+      if (result.success) sent++; else failed++;
+    }
+  } else {
+    const result = await broadcastPush(title, body, { type: 'admin_push' });
+    sent = result.sent;
+    failed = result.failed;
+  }
+
+  await db.query(
+    `UPDATE admin_messages SET total_sent = $1, total_failed = $2 WHERE id = $3`,
+    [sent, failed, record.id]
+  );
+  console.log(`📲 Push ${record.id} — envoyé: ${sent}, échoué: ${failed}`);
+};
+
 // ─── GET /api/admin/messages/history ───────────────────────────────────────
 export const getMessagesHistory = async (req, res) => {
   try {
-    const result = await db.query(
-      `SELECT * FROM admin_messages ORDER BY created_at DESC LIMIT 50`
-    );
+    const { channel } = req.query; // 'sms' | 'push' | absent (les deux)
+    const result = channel && ['sms', 'push'].includes(channel)
+      ? await db.query(
+          `SELECT * FROM admin_messages WHERE channel = $1 ORDER BY created_at DESC LIMIT 50`,
+          [channel]
+        )
+      : await db.query(`SELECT * FROM admin_messages ORDER BY created_at DESC LIMIT 50`);
+
     return successResponse(res, { messages: result.rows }, 'Historique récupéré');
   } catch (error) {
     console.error('Erreur getMessagesHistory:', error);
