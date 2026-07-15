@@ -37,10 +37,13 @@ const SUPPLIER_PHONES = {
 };
 
 // Les numéros fournisseurs sont stockés au format local (ex: 0101308007)
-// — HSMS attend le format international sans "+" (ex: 225101308007).
+// — HSMS attend le numéro complet à 10 chiffres, 0 initial INCLUS, avec
+// juste "225" devant (ex: "2250101308007") — confirmé par l'exemple
+// officiel de la doc HSMS ("2250700000001") et par des tests réels. Un 0
+// retiré ici produit un numéro que HSMS rejette avec "invalid_phone".
 const toInternational = (localPhone) => {
   if (!localPhone) return null;
-  const digits = localPhone.replace(/\s/g, '').replace(/^0/, '');
+  const digits = localPhone.replace(/\s/g, '');
   return `225${digits}`;
 };
 
