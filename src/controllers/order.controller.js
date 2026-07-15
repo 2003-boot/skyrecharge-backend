@@ -33,19 +33,20 @@ export const createOrder = async (req, res) => {
 
     const configResult = await db.query(
       `SELECT key, value FROM config
-       WHERE key IN ('app_fee_percent', 'min_credit_amount')`
+       WHERE key IN ('credit_fixed_fee', 'pass_fee_percent', 'min_credit_amount')`
     );
     const config = {};
-    configResult.rows.forEach(row => { config[row.key] = parseFloat(row.value); });
+    configResult.rows.forEach(row => { config[row.key] = parseInt(row.value); });
 
-    if (order_type === 'credit' && amount < config.min_credit_amount) {
-      return errorResponse(res, `Montant minimum : ${config.min_credit_amount} FCFA`, 400);
+    let fees = 0;
+    if (order_type === 'credit') {
+      if (amount < config.min_credit_amount) {
+        return errorResponse(res, `Montant minimum : ${config.min_credit_amount} FCFA`, 400);
+      }
+      fees = config.credit_fixed_fee;
+    } else {
+      fees = Math.round(amount * (config.pass_fee_percent / 100));
     }
-
-    // Frais uniforme de 10% (app_fee_percent) sur toute transaction, peu
-    // importe sa nature — crédit ou pass. Avant correction, le crédit
-    // appliquait un frais fixe de 50f au lieu des 10% attendus.
-    const fees = Math.round(amount * (config.app_fee_percent / 100));
 
     const totalAmount = amount + fees;
 
@@ -242,7 +243,7 @@ export const getOrderHistory = async (req, res) => {
     const { page = 1, limit = 20, type, status } = req.query;
     const offset = (page - 1) * limit;
 
-    let whereClause = 'WHERE o.user_id = $1';
+    let whereClause = 'WHERE o.user_id = $1 AND o.status != \'pending_payment\'';
     const params = [req.user.id];
     let paramCount = 2;
 
@@ -254,7 +255,7 @@ export const getOrderHistory = async (req, res) => {
     const result = await db.query(
       `SELECT o.id, o.order_type, o.beneficiary_phone, o.beneficiary_name,
               o.is_self, o.operator, o.amount, o.fees, o.total_amount,
-              o.status, o.created_at, o.completed_at,
+              o.status, o.created_at, o.completed_at, o.updated_at,
               op.name as offer_name
        FROM orders o
        LEFT JOIN operator_offers op ON o.offer_id = op.id
