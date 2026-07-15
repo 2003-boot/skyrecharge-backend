@@ -4,6 +4,8 @@ import {
   getTimeseries,
   getBalances,
   getRecentOrders,
+  getManualReviewOrders,
+  resolveManualRefund,
   getUsersCount,
   sendMessage,
   getMessagesHistory,
@@ -37,6 +39,8 @@ router.get('/stats', getStats);
 router.get('/stats/timeseries', getTimeseries);
 router.get('/balances', getBalances);
 router.get('/orders/recent', getRecentOrders);
+router.get('/orders/manual-review', getManualReviewOrders);
+router.patch('/orders/:id/resolve-refund', resolveManualRefund);
 router.get('/users/count', getUsersCount);
 router.get('/export/orders.csv', exportOrdersCSV);
 

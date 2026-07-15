@@ -222,6 +222,52 @@ export const getRecentOrders = async (req, res) => {
   }
 };
 
+// ─── GET /api/admin/orders/manual-review ────────────────────────────────────
+// Commandes remboursées mais dont le remboursement automatique a été
+// écarté (throttle 3/semaine ou 20 000f/jour, ou payment_method/phone
+// manquant, ou échec de l'appel cashin) -- nécessitent un virement manuel.
+export const getManualReviewOrders = async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT o.id, o.order_type, o.beneficiary_phone, o.operator,
+              o.amount, o.total_amount, o.failure_reason, o.customer_message,
+              o.created_at, o.payment_method, o.payment_phone,
+              u.first_name AS user_first_name, u.phone AS user_phone
+       FROM orders o
+       LEFT JOIN users u ON u.id = o.user_id
+       WHERE o.refund_status = 'manual_required'
+       ORDER BY o.created_at DESC`
+    );
+    return successResponse(res, { orders: result.rows }, 'Commandes en revue manuelle récupérées');
+  } catch (error) {
+    console.error('Erreur getManualReviewOrders:', error);
+    return errorResponse(res, 'Erreur lors de la récupération', 500);
+  }
+};
+
+// ─── PATCH /api/admin/orders/:id/resolve-refund ────────────────────────────
+// Une fois le virement fait manuellement (ex: via Wave directement, ou
+// via le bouton Transferts du dashboard), l'admin marque la commande
+// comme traitée -- la fait disparaître de la liste "revue manuelle".
+export const resolveManualRefund = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await db.query(
+      `UPDATE orders SET refund_status = 'completed', updated_at = NOW()
+       WHERE id = $1 AND refund_status = 'manual_required'
+       RETURNING id`,
+      [id]
+    );
+    if (!result.rows[0]) {
+      return errorResponse(res, 'Commande introuvable ou déjà traitée', 404);
+    }
+    return successResponse(res, {}, 'Remboursement marqué comme traité');
+  } catch (error) {
+    console.error('Erreur resolveManualRefund:', error);
+    return errorResponse(res, 'Erreur lors de la mise à jour', 500);
+  }
+};
+
 // ─── GET /api/admin/users/count ────────────────────────────────────────────
 export const getUsersCount = async (req, res) => {
   try {

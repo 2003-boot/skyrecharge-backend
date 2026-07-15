@@ -9,7 +9,6 @@ import db from '../config/database.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { io } from '../server.js';
 import { sendUSSD } from '../services/ussd.service.js';
-import redisClient from '../config/redis.js';
 import { sendPushToUser } from '../services/push.service.js';
 
 const MODEM_BY_OPERATOR = {
@@ -322,31 +321,55 @@ const REFUND_MESSAGES_MANUAL = {
   technical: "Votre transaction n'a pas pu être finalisée. Votre remboursement est en cours de traitement par notre équipe.",
   insufficient_balance: "Le fournisseur ne dispose pas actuellement d'assez de solde pour traiter votre demande. Votre remboursement est en cours de traitement par notre équipe.",
   network_issue: "Un problème de réseau chez votre opérateur a empêché la transaction. Votre remboursement est en cours de traitement par notre équipe.",
-  network_issue_throttled: "Plusieurs tentatives ont échoué pour cause de réseau opérateur. Votre remboursement est en cours de traitement par notre équipe.",
+  throttled: "Plusieurs tentatives ont échoué récemment. Votre remboursement est en cours de traitement par notre équipe.",
   other: "Votre transaction n'a pas pu être finalisée. Votre remboursement est en cours de traitement par notre équipe.",
 };
 
 // Anti-spam : chaque remboursement cashin coûte des frais réels (~2%).
-// Si un client enchaîne les échecs "réseau opérateur" (souvent en
-// retentant la même recharge en boucle), on limite le nombre de
-// remboursements automatiques déclenchés sur une fenêtre glissante d'1h,
-// pour éviter de payer des frais à répétition sur des tentatives
-// probablement redondantes.
-const NETWORK_REFUND_LIMIT = 2; // remboursements auto autorisés par heure
-const NETWORK_REFUND_WINDOW_SECONDS = 60 * 60;
+// Système basé sur la base de données (pas Redis) — auditable directement
+// dans `orders`, sans avoir besoin d'inspecter un compteur Redis à part.
+// Deux limites indépendantes, la première atteinte déclenche le mode
+// manuel :
+//   - 3 remboursements automatiques maximum par SEMAINE calendaire
+//     (lundi-dimanche), tous types d'échec confondus
+//   - 20 000f maximum remboursés automatiquement par CLIENT et par JOUR
+//     calendaire — protège contre un unique remboursement disproportionné
+//     autant que contre plusieurs petits qui s'accumulent
+const REFUND_WEEKLY_LIMIT = 3;
+const REFUND_DAILY_AMOUNT_CAP = 20000;
 
-const isNetworkRefundThrottled = async (userId) => {
-  const key = `network_refund_count:${userId}`;
+const isRefundThrottled = async (userId, refundAmount) => {
   try {
-    const count = await redisClient.incr(key);
-    if (count === 1) {
-      await redisClient.expire(key, NETWORK_REFUND_WINDOW_SECONDS);
+    const weeklyCountResult = await db.query(
+      `SELECT COUNT(*) FROM orders
+       WHERE user_id = $1
+         AND refund_status IN ('pending', 'completed')
+         AND created_at >= date_trunc('week', CURRENT_DATE)`,
+      [userId]
+    );
+    if (parseInt(weeklyCountResult.rows[0].count) >= REFUND_WEEKLY_LIMIT) {
+      return true;
     }
-    return count > NETWORK_REFUND_LIMIT;
+
+    const dailyAmountResult = await db.query(
+      `SELECT COALESCE(SUM(total_amount), 0) AS total FROM orders
+       WHERE user_id = $1
+         AND refund_status IN ('pending', 'completed')
+         AND created_at >= CURRENT_DATE`,
+      [userId]
+    );
+    const alreadyRefundedToday = parseInt(dailyAmountResult.rows[0].total);
+    if (alreadyRefundedToday + refundAmount > REFUND_DAILY_AMOUNT_CAP) {
+      return true;
+    }
+
+    return false;
   } catch (error) {
-    // Si Redis est indisponible, on ne bloque pas le remboursement —
-    // mieux vaut rembourser un peu trop que pas du tout.
-    console.error('⚠️ Impossible de vérifier le throttle remboursement réseau:', error.message);
+    // Si la base est indisponible pour cette vérification précise (cas
+    // très rare, elle vient déjà d'être interrogée juste avant dans le
+    // flux), on ne bloque pas le remboursement — mieux vaut rembourser un
+    // peu trop que pas du tout.
+    console.error('⚠️ Impossible de vérifier le throttle remboursement:', error.message);
     return false;
   }
 };
@@ -391,23 +414,21 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
     return;
   }
 
-  // Anti-spam sur les échecs réseau opérateur uniquement — les pannes
-  // techniques et soldes insuffisants ne sont pas la faute du client donc
-  // pas de raison de le limiter là-dessus.
-  if (failureType === 'network_issue') {
-    const throttled = await isNetworkRefundThrottled(order.user_id);
-    if (throttled) {
-      console.warn(`⏸️ [REMBOURSEMENT THROTTLÉ] Commande ${order.id} — trop de remboursements réseau récents pour user ${order.user_id}. Remboursement manuel requis.`);
-      await db.query(
-        `UPDATE orders
-         SET status = 'refunded', refund_status = 'manual_required', failure_reason = $1, customer_message = $2, updated_at = NOW()
-         WHERE id = $3`,
-        [internalReason, REFUND_MESSAGES_MANUAL.network_issue_throttled, order.id]
-      );
-      io.emit('order:refunded', { orderId: order.id, refundStatus: 'manual_required' });
-      notifyRefunded(order, REFUND_MESSAGES_MANUAL.network_issue_throttled);
-      return;
-    }
+  // Anti-spam appliqué à tous les types d'échec (voir isRefundThrottled
+  // ci-dessus : 3/semaine ou 20 000f/jour, le premier plafond atteint
+  // déclenche la revue manuelle).
+  const throttled = await isRefundThrottled(order.user_id, order.total_amount);
+  if (throttled) {
+    console.warn(`⏸️ [REMBOURSEMENT THROTTLÉ] Commande ${order.id} — trop de remboursements récents pour user ${order.user_id} (type: ${failureType}). Remboursement manuel requis.`);
+    await db.query(
+      `UPDATE orders
+       SET status = 'refunded', refund_status = 'manual_required', failure_reason = $1, customer_message = $2, updated_at = NOW()
+       WHERE id = $3`,
+      [internalReason, REFUND_MESSAGES_MANUAL.throttled, order.id]
+    );
+    io.emit('order:refunded', { orderId: order.id, refundStatus: 'manual_required' });
+    notifyRefunded(order, REFUND_MESSAGES_MANUAL.throttled);
+    return;
   }
 
   try {
