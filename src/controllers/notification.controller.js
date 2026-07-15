@@ -9,7 +9,7 @@ export const getMyNotifications = async (req, res) => {
        FROM notifications
        WHERE recipient_type = 'user' AND recipient_id = $1
        ORDER BY sent_at DESC
-       LIMIT 50`,
+       LIMIT 10`,
       [req.user.id]
     );
     return successResponse(res, { notifications: result.rows }, 'Notifications récupérées');
@@ -22,7 +22,7 @@ export const getMyNotifications = async (req, res) => {
 // ─── GET /api/notifications/unread-count ────────────────────────────────────
 // Endpoint léger dédié -- appelé plus souvent que la liste complète (ex: au
 // lancement de l'app pour le point rouge sur la cloche), pas la peine de
-// renvoyer 50 lignes juste pour un chiffre.
+// renvoyer 10 lignes juste pour un chiffre.
 export const getUnreadCount = async (req, res) => {
   try {
     const result = await db.query(
