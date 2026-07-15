@@ -163,11 +163,14 @@ const processDoubleLossAlerts = async () => {
     // au cas où plusieurs se seraient accumulés entre deux vérifications.
     let orderId = await redisClient.rPop(DOUBLE_LOSS_ALERT_LIST);
     while (orderId) {
-      console.error(`🚨🚨🚨 [DOUBLE PERTE] Commande ${orderId} — remboursée par timeout MAIS la recharge a quand même réussi. Passage en revue manuelle sur le dashboard.`);
+      console.error(`🚨🚨🚨 [DOUBLE PERTE] Commande ${orderId} — remboursée par timeout MAIS la recharge a quand même réussi. Signalée pour information (rien à traiter, le remboursement a déjà eu lieu normalement).`);
       try {
+        // needs_reconciliation SEUL -- ne touche jamais refund_status, qui
+        // garde sa vraie valeur (le remboursement a bien été fait, ce
+        // n'est pas ce qui doit être "traité" ici).
         await db.query(
           `UPDATE orders
-           SET refund_status = 'manual_required',
+           SET needs_reconciliation = TRUE,
                failure_reason = COALESCE(failure_reason, '') || ' | DOUBLE PERTE: recharge réussie après remboursement automatique — vérifier le solde client avant tout nouveau remboursement/geste commercial',
                updated_at = NOW()
            WHERE id = $1`,
@@ -178,7 +181,7 @@ const processDoubleLossAlerts = async () => {
         // autant -- elle reste visible dans les logs (déjà loggée
         // ci-dessus par le worker ET par cette fonction), à traiter
         // manuellement en dernier recours.
-        console.error(`❌ Impossible de marquer la commande ${orderId} en revue manuelle:`, dbError.message);
+        console.error(`❌ Impossible de marquer la commande ${orderId} pour réconciliation:`, dbError.message);
       }
       orderId = await redisClient.rPop(DOUBLE_LOSS_ALERT_LIST);
     }

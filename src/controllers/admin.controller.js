@@ -268,6 +268,50 @@ export const resolveManualRefund = async (req, res) => {
   }
 };
 
+// ─── GET /api/admin/orders/reconciliation ──────────────────────────────────
+// Distinct de "revue manuelle" -- ces commandes n'ont RIEN à traiter (le
+// remboursement a déjà eu lieu normalement), c'est juste une anomalie
+// financière (double perte) à connaître pour information.
+export const getReconciliationAlerts = async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT o.id, o.order_type, o.beneficiary_phone, o.operator,
+              o.amount, o.total_amount, o.refund_status, o.failure_reason,
+              o.created_at, u.first_name AS user_first_name, u.phone AS user_phone
+       FROM orders o
+       LEFT JOIN users u ON u.id = o.user_id
+       WHERE o.needs_reconciliation = TRUE
+       ORDER BY o.created_at DESC`
+    );
+    return successResponse(res, { orders: result.rows }, 'Anomalies récupérées');
+  } catch (error) {
+    console.error('Erreur getReconciliationAlerts:', error);
+    return errorResponse(res, 'Erreur lors de la récupération', 500);
+  }
+};
+
+// ─── PATCH /api/admin/orders/:id/acknowledge-reconciliation ────────────────
+// "Vu / classé" -- ne touche jamais refund_status, juste le signal
+// d'anomalie lui-même.
+export const acknowledgeReconciliation = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await db.query(
+      `UPDATE orders SET needs_reconciliation = FALSE, updated_at = NOW()
+       WHERE id = $1 AND needs_reconciliation = TRUE
+       RETURNING id`,
+      [id]
+    );
+    if (!result.rows[0]) {
+      return errorResponse(res, 'Commande introuvable ou déjà classée', 404);
+    }
+    return successResponse(res, {}, 'Anomalie classée');
+  } catch (error) {
+    console.error('Erreur acknowledgeReconciliation:', error);
+    return errorResponse(res, 'Erreur lors de la mise à jour', 500);
+  }
+};
+
 // ─── GET /api/admin/users/count ────────────────────────────────────────────
 export const getUsersCount = async (req, res) => {
   try {

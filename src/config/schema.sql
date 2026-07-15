@@ -102,6 +102,15 @@ CREATE TABLE IF NOT EXISTS orders (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Signal "double perte" (recharge réussie après remboursement automatique
+-- déjà déclenché) -- volontairement SÉPARÉ de refund_status, qui garde sa
+-- vraie valeur (souvent 'completed', le remboursement a bien eu lieu).
+-- Ce n'est pas un remboursement qui reste à traiter, juste une anomalie
+-- financière à connaître -- mélanger les deux dans refund_status effaçait
+-- l'information réelle et rendait le bouton "Traité" trompeur (rien à
+-- traiter, juste à prendre connaissance).
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS needs_reconciliation BOOLEAN DEFAULT FALSE;
+
 -- =============================================
 -- TABLE: otp_codes
 -- =============================================
@@ -220,5 +229,7 @@ INSERT INTO config (key, value, description) VALUES
   ('moov_bonus_tranche', '10000', 'Montant du palier de recharge Moov déclenchant le bonus'),
   ('balance_alert_threshold', '5000', 'Seuil (FCFA) en dessous duquel un solde EVD est considéré bas — SMS fournisseur + alerte dashboard'),
   ('maintenance_mode', 'false', 'Si true, l''app mobile affiche un écran de maintenance bloquant au lancement'),
-  ('blocked_operators', '[]', 'Liste JSON des opérateurs (Orange/Moov/MTN) actuellement indisponibles, ex: ["MTN"]')
+  ('blocked_operators', '[]', 'Liste JSON des opérateurs (Orange/Moov/MTN) actuellement indisponibles, ex: ["MTN"]'),
+  ('max_credit_amount', '5000', 'Montant maximum pour une recharge crédit en FCFA'),
+  ('max_daily_credit_orders', '2', 'Nombre maximum de recharges crédit par jour et par compte utilisateur')
 ON CONFLICT (key) DO NOTHING;

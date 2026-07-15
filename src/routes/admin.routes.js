@@ -6,6 +6,8 @@ import {
   getRecentOrders,
   getManualReviewOrders,
   resolveManualRefund,
+  getReconciliationAlerts,
+  acknowledgeReconciliation,
   getUsersCount,
   sendMessage,
   getMessagesHistory,
@@ -41,6 +43,8 @@ router.get('/balances', getBalances);
 router.get('/orders/recent', getRecentOrders);
 router.get('/orders/manual-review', getManualReviewOrders);
 router.patch('/orders/:id/resolve-refund', resolveManualRefund);
+router.get('/orders/reconciliation', getReconciliationAlerts);
+router.patch('/orders/:id/acknowledge-reconciliation', acknowledgeReconciliation);
 router.get('/users/count', getUsersCount);
 router.get('/export/orders.csv', exportOrdersCSV);
 
