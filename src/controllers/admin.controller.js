@@ -83,6 +83,65 @@ export const exportOrdersCSV = async (req, res) => {
   }
 };
 
+// ─── GET /api/admin/blocked-operators ───────────────────────────────────────
+export const getBlockedOperators = async (req, res) => {
+  try {
+    const result = await db.query(`SELECT value FROM config WHERE key = 'blocked_operators'`);
+    let blocked = [];
+    try {
+      blocked = result.rows[0]?.value ? JSON.parse(result.rows[0].value) : [];
+    } catch {
+      blocked = [];
+    }
+    return successResponse(res, { blocked }, 'Opérateurs bloqués récupérés');
+  } catch (error) {
+    console.error('Erreur getBlockedOperators:', error);
+    return errorResponse(res, 'Erreur lors de la récupération', 500);
+  }
+};
+
+// ─── POST /api/admin/blocked-operators ──────────────────────────────────────
+// body: { operator: 'Orange' | 'Moov' | 'MTN', blocked: boolean }
+// Un seul opérateur à la fois -- relit la liste actuelle, l'ajuste, la
+// réécrit en entier (plus simple qu'un diff partiel sur un tableau stocké
+// en JSON texte).
+export const setOperatorBlocked = async (req, res) => {
+  try {
+    const { operator, blocked } = req.body;
+    const VALID_OPERATORS = ['Orange', 'Moov', 'MTN'];
+
+    if (!VALID_OPERATORS.includes(operator)) {
+      return errorResponse(res, `Opérateur invalide: ${operator}`, 400);
+    }
+    if (typeof blocked !== 'boolean') {
+      return errorResponse(res, 'blocked doit être un booléen', 400);
+    }
+
+    const current = await db.query(`SELECT value FROM config WHERE key = 'blocked_operators'`);
+    let list = [];
+    try {
+      list = current.rows[0]?.value ? JSON.parse(current.rows[0].value) : [];
+    } catch {
+      list = [];
+    }
+
+    const updated = blocked
+      ? Array.from(new Set([...list, operator]))
+      : list.filter(op => op !== operator);
+
+    await db.query(
+      `INSERT INTO config (key, value, updated_at) VALUES ('blocked_operators', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+      [JSON.stringify(updated)]
+    );
+
+    return successResponse(res, { blocked: updated }, blocked ? `${operator} bloqué` : `${operator} débloqué`);
+  } catch (error) {
+    console.error('Erreur setOperatorBlocked:', error);
+    return errorResponse(res, 'Erreur lors de la mise à jour', 500);
+  }
+};
+
 // ─── GET /api/admin/maintenance ─────────────────────────────────────────────
 export const getMaintenanceMode = async (req, res) => {
   try {

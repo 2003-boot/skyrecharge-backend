@@ -219,5 +219,6 @@ INSERT INTO config (key, value, description) VALUES
   ('moov_bonus_percent', '4.5', 'Pourcentage de bonus Moov, versé par tranche de 10 000f'),
   ('moov_bonus_tranche', '10000', 'Montant du palier de recharge Moov déclenchant le bonus'),
   ('balance_alert_threshold', '5000', 'Seuil (FCFA) en dessous duquel un solde EVD est considéré bas — SMS fournisseur + alerte dashboard'),
-  ('maintenance_mode', 'false', 'Si true, l''app mobile affiche un écran de maintenance bloquant au lancement')
+  ('maintenance_mode', 'false', 'Si true, l''app mobile affiche un écran de maintenance bloquant au lancement'),
+  ('blocked_operators', '[]', 'Liste JSON des opérateurs (Orange/Moov/MTN) actuellement indisponibles, ex: ["MTN"]')
 ON CONFLICT (key) DO NOTHING;

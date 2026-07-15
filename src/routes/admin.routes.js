@@ -14,6 +14,8 @@ import {
   exportOrdersCSV,
   getMaintenanceMode,
   setMaintenanceMode,
+  getBlockedOperators,
+  setOperatorBlocked,
 } from '../controllers/admin.controller.js';
 import {
   getAllFlyers,
@@ -58,5 +60,9 @@ router.delete('/flyers/:id', deleteFlyer);
 // Mode maintenance
 router.get('/maintenance', getMaintenanceMode);
 router.post('/maintenance', setMaintenanceMode);
+
+// Blocage opérateurs
+router.get('/blocked-operators', getBlockedOperators);
+router.post('/blocked-operators', setOperatorBlocked);
 
 export default router;
