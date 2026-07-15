@@ -3,13 +3,24 @@ import redisClient from '../config/redis.js';
 const QUEUE_PREFIX = 'ussd_queue';
 const RESULT_PREFIX = 'ussd_result:';
 const CANCELLED_PREFIX = 'ussd_cancelled:';
+const STARTED_PREFIX = 'ussd_started:';
 const POLL_INTERVAL = 1000; // Vérifier toutes les secondes
 
-// Au-delà de ce délai sans réponse du Pi, on considère que c'est une panne
-// technique (Pi hors ligne, backend/réseau en carafe...) plutôt que
-// d'attendre indéfiniment. 180s = large marge par rapport au temps normal
-// d'une transaction USSD (quelques secondes à ~1 minute).
-const RESULT_TIMEOUT_MS = 180 * 1000;
+// Deux plafonds distincts, pas un seul :
+//   - QUEUE_TIMEOUT  : temps max qu'une commande peut attendre SON TOUR
+//     dans la file avant que le worker ne commence à la traiter. Un trafic
+//     dense (plusieurs commandes devant elle sur le même modem) n'est PAS
+//     une panne -- large marge (8 min) pour ne jamais rembourser à tort
+//     une commande juste derrière d'autres dans la queue.
+//   - PROCESSING_TIMEOUT : une fois que le worker a réellement commencé
+//     à traiter la commande (code USSD envoyé), le temps normal d'un
+//     échange USSD est de quelques secondes à ~1 minute -- 180s reste une
+//     marge large pour détecter un vrai blocage EN COURS de transaction.
+// Le worker signale explicitement le passage "en traitement" (clé
+// ussd_started:{orderId}) dès qu'il sort une commande de la file, ce qui
+// permet de savoir lequel des deux chronos appliquer à tout moment.
+const QUEUE_TIMEOUT_MS = 8 * 60 * 1000;
+const PROCESSING_TIMEOUT_MS = 180 * 1000;
 
 // Durée de vie de l'entrée "annulée" dans Redis — assez longue pour
 // couvrir largement le temps que le Pi mette à revenir en ligne après une
@@ -50,19 +61,36 @@ export const sendUSSD = async (orderId, ussdCode, ussdSteps = null, modemUrl = n
   }
 };
 
-// Attendre le résultat du Pi dans Redis, avec un plafond de 180s.
-// Au-delà, on considère que c'est une panne technique : on blackliste la
-// commande (pour que le worker l'ignore s'il revient en ligne plus tard et
-// tombe dessus dans la file) et on renvoie un résultat "technical_failure"
-// que payment.controller.js saura distinguer d'un échec normal (réseau
-// opérateur, solde insuffisant) pour déclencher le bon message et le bon
-// type de remboursement.
+// Attendre le résultat du Pi dans Redis. Applique QUEUE_TIMEOUT tant que
+// le worker n'a pas encore commencé à traiter la commande, puis bascule
+// sur PROCESSING_TIMEOUT (plus court) dès qu'il l'a prise en charge --
+// voir le commentaire sur les deux constantes plus haut.
 const waitForResult = (orderId) => {
   return new Promise((resolve, reject) => {
     const resultKey = `${RESULT_PREFIX}${orderId}`;
-    const startedAt = Date.now();
+    const startedKey = `${STARTED_PREFIX}${orderId}`;
+    const queuedAt = Date.now();
+    let processingStartedAt = null;
 
-    console.log(`⏳ Attente résultat Pi pour: ${resultKey} (timeout ${RESULT_TIMEOUT_MS / 1000}s)`);
+    console.log(`⏳ Attente résultat Pi pour: ${resultKey} (file: ${QUEUE_TIMEOUT_MS / 1000}s max, traitement: ${PROCESSING_TIMEOUT_MS / 1000}s max)`);
+
+    const giveUp = async (reasonLabel) => {
+      console.error(`⏱️ Timeout (${reasonLabel}) pour la commande ${orderId} — panne technique présumée`);
+
+      // Empêche le worker d'exécuter cette commande plus tard s'il
+      // revient en ligne après ce timeout (sinon : double perte,
+      // remboursement + recharge offerte gratuitement). Le worker
+      // revérifie aussi cette liste noire APRÈS son propre traitement,
+      // pas seulement avant -- voir worker.py pour le filet de sécurité
+      // côté Pi si jamais il a déjà commencé quand ce timeout tombe.
+      await redisClient.set(`${CANCELLED_PREFIX}${orderId}`, '1', { EX: CANCELLED_TTL_SECONDS });
+
+      resolve({
+        success: false,
+        technical_failure: true,
+        error: `Timeout (${reasonLabel})`,
+      });
+    };
 
     const checkResult = async () => {
       try {
@@ -72,24 +100,35 @@ const waitForResult = (orderId) => {
           const parsed = JSON.parse(result);
           console.log(`📥 Résultat reçu du Pi:`, parsed);
           await redisClient.del(resultKey);
+          await redisClient.del(startedKey);
           resolve(parsed);
           return;
         }
 
-        if (Date.now() - startedAt >= RESULT_TIMEOUT_MS) {
-          console.error(`⏱️ Timeout: aucun résultat du Pi après ${RESULT_TIMEOUT_MS / 1000}s pour la commande ${orderId} — panne technique présumée`);
+        // Le worker a-t-il commencé à traiter cette commande ?
+        if (processingStartedAt === null) {
+          const started = await redisClient.get(startedKey);
+          if (started) {
+            processingStartedAt = Date.now();
+            console.log(`🚦 [${orderId}] Traitement démarré côté worker — bascule sur le plafond court (${PROCESSING_TIMEOUT_MS / 1000}s)`);
+          }
+        }
 
-          // Empêche le worker d'exécuter cette commande plus tard s'il
-          // revient en ligne après ce timeout (sinon : double perte,
-          // remboursement + recharge offerte gratuitement).
-          await redisClient.set(`${CANCELLED_PREFIX}${orderId}`, '1', { EX: CANCELLED_TTL_SECONDS });
-
-          resolve({
-            success: false,
-            technical_failure: true,
-            error: `Timeout: aucune réponse du worker après ${RESULT_TIMEOUT_MS / 1000}s`,
-          });
-          return;
+        const now = Date.now();
+        if (processingStartedAt !== null) {
+          // En cours de traitement actif -> plafond court, un vrai blocage
+          // mi-transaction doit être détecté rapidement.
+          if (now - processingStartedAt >= PROCESSING_TIMEOUT_MS) {
+            await giveUp('traitement actif trop long');
+            return;
+          }
+        } else {
+          // Toujours en attente dans la file -> plafond large, un trafic
+          // dense n'est pas une panne.
+          if (now - queuedAt >= QUEUE_TIMEOUT_MS) {
+            await giveUp('attente en file trop longue');
+            return;
+          }
         }
 
         setTimeout(checkResult, POLL_INTERVAL);

@@ -87,3 +87,50 @@ export const startBalanceMonitor = () => {
     checkOperatorBalance('orange');
   }, CHECK_INTERVAL_MS);
 };
+
+// ─── Traitement des alertes "double perte" ─────────────────────────────────
+// Le worker Pi pousse dans cette liste Redis l'id de toute commande où la
+// recharge a fini par réussir APRÈS que le backend ait déjà abandonné et
+// remboursé le client (course entre le timeout et un traitement plus lent
+// que prévu — voir worker.py). L'argent est déjà parti côté opérateur à ce
+// stade, impossible d'annuler — on réutilise le mécanisme de "revue
+// manuelle" déjà existant sur le dashboard admin (refund_status =
+// 'manual_required') plutôt que de construire un système d'alerte séparé
+// que personne n'ira consulter.
+const DOUBLE_LOSS_ALERT_LIST = 'double_loss_alerts';
+const DOUBLE_LOSS_CHECK_INTERVAL_MS = 60 * 1000; // Vérifié toutes les minutes
+
+const processDoubleLossAlerts = async () => {
+  try {
+    // Vide la liste entièrement à chaque passage (pas juste un élément) —
+    // au cas où plusieurs se seraient accumulés entre deux vérifications.
+    let orderId = await redisClient.rPop(DOUBLE_LOSS_ALERT_LIST);
+    while (orderId) {
+      console.error(`🚨🚨🚨 [DOUBLE PERTE] Commande ${orderId} — remboursée par timeout MAIS la recharge a quand même réussi. Passage en revue manuelle sur le dashboard.`);
+      try {
+        await db.query(
+          `UPDATE orders
+           SET refund_status = 'manual_required',
+               failure_reason = COALESCE(failure_reason, '') || ' | DOUBLE PERTE: recharge réussie après remboursement automatique — vérifier le solde client avant tout nouveau remboursement/geste commercial',
+               updated_at = NOW()
+           WHERE id = $1`,
+          [orderId]
+        );
+      } catch (dbError) {
+        // Si l'écriture en base échoue, on ne perd pas l'alerte pour
+        // autant -- elle reste visible dans les logs (déjà loggée
+        // ci-dessus par le worker ET par cette fonction), à traiter
+        // manuellement en dernier recours.
+        console.error(`❌ Impossible de marquer la commande ${orderId} en revue manuelle:`, dbError.message);
+      }
+      orderId = await redisClient.rPop(DOUBLE_LOSS_ALERT_LIST);
+    }
+  } catch (error) {
+    console.error('❌ Erreur traitement alertes double perte:', error.message);
+  }
+};
+
+export const startDoubleLossMonitor = () => {
+  console.log(`🚨 Monitoring des doubles pertes démarré (vérification toutes les ${DOUBLE_LOSS_CHECK_INTERVAL_MS / 1000}s)`);
+  setInterval(processDoubleLossAlerts, DOUBLE_LOSS_CHECK_INTERVAL_MS);
+};
