@@ -82,6 +82,44 @@ export const exportOrdersCSV = async (req, res) => {
   }
 };
 
+// ─── GET /api/admin/maintenance ─────────────────────────────────────────────
+export const getMaintenanceMode = async (req, res) => {
+  try {
+    const result = await db.query(`SELECT value FROM config WHERE key = 'maintenance_mode'`);
+    return successResponse(res, {
+      enabled: result.rows[0]?.value === 'true',
+    }, 'Statut maintenance récupéré');
+  } catch (error) {
+    console.error('Erreur getMaintenanceMode:', error);
+    return errorResponse(res, 'Erreur lors de la récupération du statut maintenance', 500);
+  }
+};
+
+// ─── POST /api/admin/maintenance ────────────────────────────────────────────
+// body: { enabled: boolean }
+// NB: l'envoi automatique d'une notification push aux utilisateurs à
+// l'activation n'est pas encore branché ici — dépend de l'intégration
+// des notifications push, pas encore construite à ce stade du projet.
+export const setMaintenanceMode = async (req, res) => {
+  try {
+    const { enabled } = req.body;
+    if (typeof enabled !== 'boolean') {
+      return errorResponse(res, 'enabled doit être un booléen', 400);
+    }
+
+    await db.query(
+      `INSERT INTO config (key, value, updated_at) VALUES ('maintenance_mode', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()`,
+      [String(enabled)]
+    );
+
+    return successResponse(res, { enabled }, enabled ? 'Maintenance activée' : 'Maintenance désactivée');
+  } catch (error) {
+    console.error('Erreur setMaintenanceMode:', error);
+    return errorResponse(res, 'Erreur lors de la mise à jour du statut maintenance', 500);
+  }
+};
+
 // ─── GET /api/admin/balances ────────────────────────────────────────────────
 // Soldes EVD Orange/Moov + bénéfice Orange, lus depuis Redis (écrits par
 // worker.py). Bénéfice Moov n'y figure pas : il est calculé, pas observé

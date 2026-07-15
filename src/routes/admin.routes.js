@@ -11,6 +11,8 @@ import {
   getTransfersHistory,
   transferWebhook,
   exportOrdersCSV,
+  getMaintenanceMode,
+  setMaintenanceMode,
 } from '../controllers/admin.controller.js';
 import {
   getAllFlyers,
@@ -48,5 +50,9 @@ router.get('/flyers', getAllFlyers);
 router.post('/flyers', createFlyer);
 router.patch('/flyers/:id', updateFlyer);
 router.delete('/flyers/:id', deleteFlyer);
+
+// Mode maintenance
+router.get('/maintenance', getMaintenanceMode);
+router.post('/maintenance', setMaintenanceMode);
 
 export default router;
