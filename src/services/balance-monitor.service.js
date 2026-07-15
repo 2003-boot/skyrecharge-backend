@@ -36,6 +36,15 @@ const SUPPLIER_PHONES = {
   orange: process.env.ORANGE_SUPPLIER_PHONE,
 };
 
+// Le numéro EVD/commission à recharger — distinct du numéro du fournisseur
+// (SUPPLIER_PHONES ci-dessus, qui reçoit juste le SMS d'alerte). Inclus
+// dans le message pour que le fournisseur sache directement sur quel
+// numéro faire le versement, sans avoir à demander.
+const RECHARGE_NUMBERS = {
+  moov: process.env.MOOV_RECHARGE_NUMBER,
+  orange: process.env.ORANGE_RECHARGE_NUMBER,
+};
+
 // Les numéros fournisseurs sont stockés au format local (ex: 0101308007)
 // — HSMS attend le numéro complet à 10 chiffres, 0 initial INCLUS, avec
 // juste "225" devant (ex: "2250101308007") — confirmé par l'exemple
@@ -67,7 +76,10 @@ const checkOperatorBalance = async (operator) => {
     }
 
     const label = OPERATOR_LABELS[operator] || operator;
-    const message = `Bonjour, le solde ${label} SkyRecharge est bas : ${balance} FCFA restants. Merci de recharger dès que possible.`;
+    const rechargeNumber = RECHARGE_NUMBERS[operator];
+    const message = rechargeNumber
+      ? `Bonjour, le solde ${label} SkyRecharge est bas : ${balance} FCFA restants sur le ${rechargeNumber}. Merci de recharger dès que possible.`
+      : `Bonjour, le solde ${label} SkyRecharge est bas : ${balance} FCFA restants. Merci de recharger dès que possible.`;
 
     const result = await sendSMS(phone, message);
 
@@ -116,7 +128,10 @@ export const alertInsufficientBalanceNow = async (operator, orderId) => {
     }
 
     const label = OPERATOR_LABELS[opKey] || operator;
-    const message = `Bonjour, une recharge SkyRecharge vient d'échouer par manque de solde ${label} (commande ${orderId}). Merci de recharger dès que possible.`;
+    const rechargeNumber = RECHARGE_NUMBERS[opKey];
+    const message = rechargeNumber
+      ? `Bonjour, une recharge SkyRecharge vient d'échouer par manque de solde ${label} sur le ${rechargeNumber} (commande ${orderId}). Merci de recharger dès que possible.`
+      : `Bonjour, une recharge SkyRecharge vient d'échouer par manque de solde ${label} (commande ${orderId}). Merci de recharger dès que possible.`;
 
     const result = await sendSMS(phone, message);
     if (result.success) {
