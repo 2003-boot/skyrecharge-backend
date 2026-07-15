@@ -4,6 +4,8 @@ import orderRoutes from './order.routes.js';
 import userRoutes from './user.routes.js';
 import paymentRoutes from './payment.routes.js';
 import adminRoutes from './admin.routes.js';
+import configRoutes from './config.routes.js';
+import flyerRoutes from './flyer.routes.js';
 
 const router = Router();
 
@@ -23,5 +25,7 @@ router.use('/orders', orderRoutes);
 router.use('/users', userRoutes);
 router.use('/payments', paymentRoutes);
 router.use('/admin', adminRoutes);
+router.use('/config', configRoutes);
+router.use('/flyers', flyerRoutes);
 
 export default router;

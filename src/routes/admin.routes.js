@@ -12,6 +12,12 @@ import {
   transferWebhook,
   exportOrdersCSV,
 } from '../controllers/admin.controller.js';
+import {
+  getAllFlyers,
+  createFlyer,
+  updateFlyer,
+  deleteFlyer,
+} from '../controllers/flyer.controller.js';
 import { authenticateAdmin } from '../middlewares/auth.js';
 
 const router = Router();
@@ -36,5 +42,11 @@ router.get('/messages/history', getMessagesHistory);
 // Transferts fournisseurs (cashin Babimo)
 router.post('/transfers', createTransfer);
 router.get('/transfers/history', getTransfersHistory);
+
+// Flyers (bandeau accueil mobile)
+router.get('/flyers', getAllFlyers);
+router.post('/flyers', createFlyer);
+router.patch('/flyers/:id', updateFlyer);
+router.delete('/flyers/:id', deleteFlyer);
 
 export default router;

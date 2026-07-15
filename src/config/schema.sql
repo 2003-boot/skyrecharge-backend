@@ -171,6 +171,21 @@ CREATE TABLE IF NOT EXISTS supplier_transfers (
 );
 
 -- =============================================
+-- TABLE: flyers (bandeau accueil -- remplace "offres exclusives",
+-- source de revenu potentielle : flyers internes ou payants par des
+-- entreprises tierces)
+-- =============================================
+CREATE TABLE IF NOT EXISTS flyers (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  image_url TEXT NOT NULL,
+  link_url TEXT,
+  is_active BOOLEAN DEFAULT TRUE,
+  display_order INTEGER DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- =============================================
 -- INDEX pour les performances
 -- =============================================
 CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
@@ -180,6 +195,7 @@ CREATE INDEX IF NOT EXISTS idx_otp_codes_phone ON otp_codes(phone);
 CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient_id, recipient_type);
 CREATE INDEX IF NOT EXISTS idx_admin_messages_created_at ON admin_messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_supplier_transfers_created_at ON supplier_transfers(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_flyers_active_order ON flyers(is_active, display_order);
 
 -- =============================================
 -- DONNÉES INITIALES
