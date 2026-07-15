@@ -10,6 +10,7 @@ import { successResponse, errorResponse } from '../utils/response.js';
 import { io } from '../server.js';
 import { sendUSSD } from '../services/ussd.service.js';
 import { sendPushToUser } from '../services/push.service.js';
+import { alertInsufficientBalanceNow } from '../services/balance-monitor.service.js';
 
 const MODEM_BY_OPERATOR = {
   'Moov': 'http://192.168.9.1/',
@@ -393,6 +394,15 @@ const notifyRefunded = (order, customerMessage) => {
 };
 
 const triggerRefund = async (order, internalReason, failureType = 'other') => {
+  // Alerte fournisseur immédiate — zéro latence contrairement au check
+  // périodique (10 min), qui reste un complément préventif mais ne
+  // détecte jamais aussi vite qu'un vrai échec en direct.
+  if (failureType === 'insufficient_balance' && order.operator) {
+    alertInsufficientBalanceNow(order.operator, order.id).catch(err => {
+      console.error('⚠️ Alerte solde insuffisant immédiate non envoyée:', err.message);
+    });
+  }
+
   // merchant_transaction_id doit être unique à chaque appel cashin —
   // jamais réutiliser celui du paiement d'origine.
   const refundId = `RET-${order.id}-${Date.now()}`;

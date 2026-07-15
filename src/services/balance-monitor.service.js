@@ -91,6 +91,45 @@ export const startBalanceMonitor = () => {
   }, CHECK_INTERVAL_MS);
 };
 
+// ─── Alerte instantanée sur échec réel "solde insuffisant" ─────────────────
+// Le check périodique ci-dessus (checkOperatorBalance, toutes les 10 min)
+// reste utile en préventif, mais laisse toujours un angle mort : le solde
+// peut s'épuiser juste après un check. Dès qu'une VRAIE commande échoue
+// avec cette cause précise, on le sait avec certitude et sans latence --
+// appelé directement depuis payment.controller.js au moment de l'échec,
+// pas besoin d'attendre le prochain sondage. Réutilise le même
+// cooldown (6h) que le check périodique : les deux alertent sur le même
+// problème, pas de raison d'avoir deux compteurs anti-spam séparés.
+export const alertInsufficientBalanceNow = async (operator, orderId) => {
+  try {
+    const opKey = (operator || '').toLowerCase();
+    if (!SUPPLIER_PHONES[opKey]) return; // opérateur inconnu (ex: MTN, pas encore de fournisseur configuré)
+
+    const cooldownKey = `${ALERT_COOLDOWN_KEY_PREFIX}${opKey}`;
+    const alreadyAlerted = await redisClient.get(cooldownKey);
+    if (alreadyAlerted) return; // Déjà alerté récemment (périodique ou une commande précédente)
+
+    const phone = toInternational(SUPPLIER_PHONES[opKey]);
+    if (!phone) {
+      console.warn(`⚠️ Aucun numéro fournisseur configuré pour ${opKey} — alerte solde insuffisant (commande ${orderId}) impossible à envoyer.`);
+      return;
+    }
+
+    const label = OPERATOR_LABELS[opKey] || operator;
+    const message = `Bonjour, une recharge SkyRecharge vient d'échouer par manque de solde ${label} (commande ${orderId}). Merci de recharger dès que possible.`;
+
+    const result = await sendSMS(phone, message);
+    if (result.success) {
+      console.log(`📱 Alerte solde insuffisant envoyée IMMÉDIATEMENT — ${label} (commande ${orderId}) → ${phone}`);
+      await redisClient.set(cooldownKey, '1', { EX: ALERT_COOLDOWN_SECONDS });
+    } else {
+      console.error(`❌ Échec envoi alerte solde insuffisant immédiate ${label}:`, result.error);
+    }
+  } catch (error) {
+    console.error(`❌ Erreur alerte solde insuffisant immédiate (${operator}):`, error.message);
+  }
+};
+
 // ─── Traitement des alertes "double perte" ─────────────────────────────────
 // Le worker Pi pousse dans cette liste Redis l'id de toute commande où la
 // recharge a fini par réussir APRÈS que le backend ait déjà abandonné et
