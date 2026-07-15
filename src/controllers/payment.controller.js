@@ -17,12 +17,17 @@ const MODEM_BY_OPERATOR = {
   'Orange': 'http://192.168.8.1/',
 };
 
+// Détection opérateur depuis le numéro -- SEULS 01 (Moov), 07 (Orange) et
+// 05 (MTN) sont des préfixes valides en Côte d'Ivoire. Ne sert plus que de
+// filet de sécurité pour d'anciennes commandes créées avant que
+// order.controller.js ne renseigne systématiquement operator à la
+// création -- toute nouvelle commande a déjà cette valeur.
 const detectOperator = (phone) => {
   const clean = phone.replace('+225', '').replace(/\s/g, '');
-  if (clean.startsWith('07') || clean.startsWith('08') || clean.startsWith('09')) return 'Orange';
-  if (clean.startsWith('01') || clean.startsWith('02') || clean.startsWith('03')) return 'Moov';
-  if (clean.startsWith('05') || clean.startsWith('06') || clean.startsWith('04')) return 'MTN';
-  return 'Moov';
+  if (clean.startsWith('01')) return 'Moov';
+  if (clean.startsWith('07')) return 'Orange';
+  if (clean.startsWith('05')) return 'MTN';
+  return null;
 };
 
 // POST /api/payments/initiate
@@ -215,6 +220,19 @@ const processUSSDAfterPayment = async (order) => {
   try {
     const phone = order.beneficiary_phone.replace('+225', '').replace(/\s/g, '');
     const operator = order.operator || detectOperator(order.beneficiary_phone);
+
+    if (!operator) {
+      // Ne devrait plus arriver pour une nouvelle commande (operator
+      // toujours renseigné dès order.controller.js), mais filet de
+      // sécurité pour d'éventuelles anciennes commandes en base sans
+      // opérateur ET avec un numéro au préfixe invalide -- mieux vaut
+      // rembourser proprement que d'envoyer un USSD au hasard sur le
+      // mauvais modem.
+      console.error(`❌ Impossible de déterminer l'opérateur pour la commande ${order.id} (numéro: ${order.beneficiary_phone})`);
+      await triggerRefund(order, 'Opérateur indéterminable (numéro invalide)', 'other');
+      return;
+    }
+
     const modemUrl = MODEM_BY_OPERATOR[operator] || 'http://192.168.9.1/';
 
     console.log(`🔄 Traitement USSD post-paiement: ${order.id}`);

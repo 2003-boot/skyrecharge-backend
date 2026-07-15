@@ -10,13 +10,15 @@ const MODEM_BY_OPERATOR = {
   'MTN': 'http://192.168.9.1/',
 };
 
-// Détection opérateur depuis le numéro
+// Détection opérateur depuis le numéro -- SEULS 01 (Moov), 07 (Orange) et
+// 05 (MTN) sont des préfixes valides en Côte d'Ivoire. Tout autre préfixe
+// n'est pas une variante d'un de ces opérateurs, c'est un numéro invalide.
 const detectOperator = (phone) => {
   const clean = phone.replace('+225', '').replace(/\s/g, '');
-  if (clean.startsWith('07') || clean.startsWith('08') || clean.startsWith('09')) return 'Orange';
-  if (clean.startsWith('01') || clean.startsWith('02') || clean.startsWith('03')) return 'Moov';
-  if (clean.startsWith('05') || clean.startsWith('06')) return 'MTN';
-  return 'Moov';
+  if (clean.startsWith('01')) return 'Moov';
+  if (clean.startsWith('07')) return 'Orange';
+  if (clean.startsWith('05')) return 'MTN';
+  return null;
 };
 
 // POST /api/orders
@@ -31,23 +33,77 @@ export const createOrder = async (req, res) => {
       return errorResponse(res, 'Données manquantes', 400);
     }
 
-    const configResult = await db.query(
-      `SELECT key, value FROM config
-       WHERE key IN ('credit_fixed_fee', 'pass_fee_percent', 'min_credit_amount')`
-    );
-    const config = {};
-    configResult.rows.forEach(row => { config[row.key] = parseInt(row.value); });
-
-    let fees = 0;
+    // Pour le crédit, l'opérateur est déduit du numéro (pas de sélection
+    // explicite) -- un préfixe qui ne correspond à aucun opérateur valide
+    // (seuls 01/05/07 le sont) doit être rejeté ici, avant même de
+    // regarder la config -- inutile de créer une commande vouée à
+    // échouer côté USSD de toute façon.
+    let creditOperator = null;
     if (order_type === 'credit') {
-      if (amount < config.min_credit_amount) {
-        return errorResponse(res, `Montant minimum : ${config.min_credit_amount} FCFA`, 400);
+      creditOperator = detectOperator(beneficiary_phone);
+      if (!creditOperator) {
+        return errorResponse(res, 'Numéro invalide — seuls les préfixes 01 (Moov), 05 (MTN) et 07 (Orange) sont acceptés.', 400);
       }
-      fees = config.credit_fixed_fee;
-    } else {
-      fees = Math.round(amount * (config.pass_fee_percent / 100));
     }
 
+    const configResult = await db.query(
+      `SELECT key, value FROM config
+       WHERE key IN ('app_fee_percent', 'min_credit_amount', 'max_credit_amount', 'maintenance_mode', 'blocked_operators')`
+    );
+    const config = {};
+    configResult.rows.forEach(row => { config[row.key] = row.value; });
+
+    // Vérification côté serveur — l'app mobile empêche déjà ça côté
+    // interface, mais uniquement en cache/au lancement : un utilisateur
+    // déjà sur l'app ne verrait rien changer tant qu'il ne relance pas.
+    // Ici, c'est le vrai verrou : aucune commande ne peut être créée
+    // pendant une maintenance ou vers un opérateur bloqué, peu importe ce
+    // que l'app affiche.
+    if (config.maintenance_mode === 'true') {
+      return errorResponse(res, 'Le service est actuellement en maintenance. Réessayez plus tard.', 503);
+    }
+
+    let blockedOperators = [];
+    try {
+      blockedOperators = config.blocked_operators ? JSON.parse(config.blocked_operators) : [];
+    } catch {
+      blockedOperators = [];
+    }
+    if (blockedOperators.length > 0) {
+      // Pour le crédit, l'opérateur soumis par le client n'est pas fiable
+      // (pas de sélection explicite en amont) -- on le redétecte depuis
+      // le numéro bénéficiaire plutôt que de faire confiance à ce qui est
+      // envoyé. Pour les pass, l'opérateur vient du choix explicite de
+      // l'offre.
+      const effectiveOperator = order_type === 'credit'
+        ? creditOperator
+        : operator;
+
+      if (effectiveOperator && blockedOperators.includes(effectiveOperator)) {
+        return errorResponse(res, `Les services ${effectiveOperator} ne sont pas disponibles actuellement.`, 400);
+      }
+    }
+
+    // Convertit en nombres les clés numériques -- le reste (maintenance_mode,
+    // blocked_operators) reste en texte brut, déjà lu ci-dessus.
+    const appFeePercent = parseFloat(config.app_fee_percent);
+    const minCreditAmount = parseFloat(config.min_credit_amount);
+    const maxCreditAmount = parseFloat(config.max_credit_amount);
+
+    // Frais uniforme de 10% (app_fee_percent) sur toute transaction, peu
+    // importe sa nature — crédit ou pass.
+    if (order_type === 'credit') {
+      if (amount < minCreditAmount) {
+        return errorResponse(res, `Montant minimum : ${minCreditAmount} FCFA`, 400);
+      }
+      // Plafond crédit (5000f par défaut) -- pas de raison équivalente
+      // côté pass, dont le prix est fixé par l'offre elle-même.
+      if (maxCreditAmount && amount > maxCreditAmount) {
+        return errorResponse(res, `Montant maximum pour le crédit : ${maxCreditAmount} FCFA`, 400);
+      }
+    }
+
+    const fees = Math.round(amount * (appFeePercent / 100));
     const totalAmount = amount + fees;
 
     const result = await db.query(
@@ -59,7 +115,11 @@ export const createOrder = async (req, res) => {
       [
         req.user.id, order_type, beneficiary_phone,
         beneficiary_name || null, is_self ?? true,
-        operator || null, offer_id || null,
+        // Pour le crédit : valeur calculée et déjà validée côté serveur
+        // ci-dessus (creditOperator), pas celle envoyée par le client.
+        // Pour les pass : celle choisie explicitement par l'utilisateur.
+        (order_type === 'credit' ? creditOperator : operator) || null,
+        offer_id || null,
         amount, fees, totalAmount,
       ]
     );
