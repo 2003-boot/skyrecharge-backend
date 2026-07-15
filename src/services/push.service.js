@@ -14,7 +14,13 @@ const sendExpoPush = async (expoPushToken, title, body, data = {}) => {
     return { success: false, error: 'invalid_token' };
   }
 
-  const message = { to: expoPushToken, sound: 'default', title, body, data };
+  // channelId explicite obligatoire : depuis le passage à FCM V1, Expo ne
+  // route plus automatiquement vers le canal "default" si channelId est
+  // omis -- Android crée alors un canal de secours
+  // (fcm_fallback_notification_channel) qui a le popup à l'écran DÉSACTIVÉ
+  // par défaut. Sans cette ligne, la notif arrive (visible dans le tiroir)
+  // mais sans jamais de popup ni de son.
+  const message = { to: expoPushToken, sound: 'default', title, body, data, channelId: 'default' };
 
   try {
     const tickets = await expo.sendPushNotificationsAsync([message]);
@@ -71,7 +77,7 @@ export const broadcastPush = async (title, body, data = {}) => {
     const chunk = result.rows.slice(i, i + CHUNK_SIZE);
     const messages = chunk
       .filter(u => Expo.isExpoPushToken(u.fcm_token))
-      .map(u => ({ to: u.fcm_token, sound: 'default', title, body, data }));
+      .map(u => ({ to: u.fcm_token, sound: 'default', title, body, data, channelId: 'default' }));
 
     // La notif est enregistrée en base pour chaque utilisateur, même ceux
     // dont le token s'avérerait invalide au moment de l'envoi -- ils la
