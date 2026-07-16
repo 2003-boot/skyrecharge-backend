@@ -39,7 +39,11 @@ const sendExpoPush = async (expoPushToken, title, body, data = {}) => {
 // ─── Enregistre la notif en base (visible dans l'écran notifications.tsx),
 // que l'envoi push ait techniquement réussi ou non -- l'utilisateur doit
 // pouvoir consulter l'historique même si son token push était périmé.
-const recordNotification = async (userId, title, body, data = {}) => {
+// Exportée séparément de sendPushToUser : certains évènements (ex. succès
+// de recharge) doivent apparaître dans l'historique in-app SANS déclencher
+// de notification push, car le client est déjà en train de regarder
+// l'écran de succès en direct au moment où ça se produit.
+export const recordNotification = async (userId, title, body, data = {}) => {
   try {
     await db.query(
       `INSERT INTO notifications (recipient_type, recipient_id, title, body, data)

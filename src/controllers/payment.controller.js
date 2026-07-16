@@ -9,7 +9,7 @@ import db from '../config/database.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { io } from '../server.js';
 import { sendUSSD } from '../services/ussd.service.js';
-import { sendPushToUser } from '../services/push.service.js';
+import { sendPushToUser, recordNotification } from '../services/push.service.js';
 import { alertInsufficientBalanceNow } from '../services/balance-monitor.service.js';
 
 const MODEM_BY_OPERATOR = {
@@ -289,10 +289,15 @@ const processUSSDAfterPayment = async (order) => {
       io.emit('order:completed', { orderId: order.id, message: result.content });
       console.log(`✅ Commande ${order.id} complétée!`);
       // Pas de push ici volontairement : le client voit déjà l'écran de
-      // succès en direct (polling sur processing.tsx) — une notif push en
-      // plus serait redondante. Contrairement au remboursement (voir
-      // notifyRefunded plus bas), qui reste utile même si le client a déjà
-      // quitté l'app.
+      // succès en direct (polling sur processing.tsx) — un push en plus
+      // serait redondant. On garde quand même la trace dans l'historique
+      // in-app (écran Notifications), juste sans déclencher le push/bandeau.
+      recordNotification(
+        order.user_id,
+        'Recharge réussie ✅',
+        `Votre recharge de ${order.total_amount.toLocaleString('fr-FR')} F a bien été effectuée.`,
+        { orderId: order.id, type: 'order_completed' }
+      ).catch(err => console.error('⚠️ Notification order:completed non enregistrée:', err.message));
       return;
     }
 
