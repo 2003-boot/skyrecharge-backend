@@ -36,6 +36,13 @@ const SUPPLIER_PHONES = {
   orange: process.env.ORANGE_SUPPLIER_PHONE,
 };
 
+// Numéro de l'administrateur (toi) — reçoit sa propre alerte, distincte du
+// SMS envoyé au fournisseur : celui du fournisseur lui demande de
+// recharger, celui-ci te prévient juste que ça vient de se passer, pour
+// que tu puisses relancer le fournisseur toi-même si besoin.
+const ADMIN_PHONE = process.env.ADMIN_PHONE;
+const ADMIN_ALERT_COOLDOWN_KEY_PREFIX = 'admin_balance_alert_sent:';
+
 // Le numéro EVD/commission à recharger — distinct du numéro du fournisseur
 // (SUPPLIER_PHONES ci-dessus, qui reçoit juste le SMS d'alerte). Inclus
 // dans le message pour que le fournisseur sache directement sur quel
@@ -54,6 +61,36 @@ const toInternational = (localPhone) => {
   if (!localPhone) return null;
   const digits = localPhone.replace(/\s/g, '');
   return `225${digits}`;
+};
+
+// Alerte admin -- même cooldown (6h) que l'alerte fournisseur, mais clé
+// séparée : les deux SMS partent indépendamment, pas de raison qu'un envoi
+// réussi à l'un bloque l'autre.
+const alertAdminLowBalance = async (operator, balance) => {
+  try {
+    const phone = toInternational(ADMIN_PHONE);
+    if (!phone) {
+      console.warn(`⚠️ ADMIN_PHONE non configuré — alerte admin solde bas (${operator}) impossible à envoyer.`);
+      return;
+    }
+
+    const cooldownKey = `${ADMIN_ALERT_COOLDOWN_KEY_PREFIX}${operator}`;
+    const alreadyAlerted = await redisClient.get(cooldownKey);
+    if (alreadyAlerted) return;
+
+    const label = OPERATOR_LABELS[operator] || operator;
+    const message = `La puce ${label} a un solde bas, pensez à informer votre fournisseur.`;
+
+    const result = await sendSMS(phone, message);
+    if (result.success) {
+      console.log(`📱 Alerte admin solde bas envoyée — ${label}${typeof balance === 'number' ? `: ${balance} FCFA` : ''} → ${phone}`);
+      await redisClient.set(cooldownKey, '1', { EX: ALERT_COOLDOWN_SECONDS });
+    } else {
+      console.error(`❌ Échec envoi alerte admin solde bas ${label}:`, result.error);
+    }
+  } catch (error) {
+    console.error(`❌ Erreur alerte admin solde bas (${operator}):`, error.message);
+  }
 };
 
 const checkOperatorBalance = async (operator) => {
@@ -89,6 +126,8 @@ const checkOperatorBalance = async (operator) => {
     } else {
       console.error(`❌ Échec envoi alerte solde ${label}:`, result.error);
     }
+
+    alertAdminLowBalance(operator, balance);
 
   } catch (error) {
     console.error(`❌ Erreur vérification solde ${operator}:`, error.message);
@@ -140,6 +179,8 @@ export const alertInsufficientBalanceNow = async (operator, orderId) => {
     } else {
       console.error(`❌ Échec envoi alerte solde insuffisant immédiate ${label}:`, result.error);
     }
+
+    alertAdminLowBalance(opKey);
   } catch (error) {
     console.error(`❌ Erreur alerte solde insuffisant immédiate (${operator}):`, error.message);
   }
