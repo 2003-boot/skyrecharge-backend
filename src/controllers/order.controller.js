@@ -273,6 +273,47 @@ const processUSSDOrder = async (order) => {
   }
 };
 
+// POST /api/orders/:id/cancel-timeout
+// Appelée par processing.tsx quand le paiement n'a toujours pas été
+// confirmé après 5 min (MAX_PAYMENT_VERIFICATION_SECONDS côté app) --
+// jusqu'ici ce cas laissait la commande bloquée au statut "queued"
+// indéfiniment. Idempotent comme handleSuccessfulPayment/handleFailedPayment
+// dans payment.controller.js : la clause WHERE status IN (...) fait qu'un
+// paiement confirmé en retard par le webhook/checkStatus juste après cet
+// appel ne trouvera plus la commande dans ('queued', 'pending_payment') et
+// ne la fera donc PAS repartir en traitement -- pas besoin de liste noire
+// Redis ici, la commande n'a jamais été poussée dans la file USSD à ce
+// stade (voir processUSSDAfterPayment, déclenché uniquement après
+// confirmation de paiement).
+export const cancelUnpaidOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await db.query(
+      `UPDATE orders
+       SET status = 'cancelled', failure_reason = 'Paiement non validé (timeout 5 min)', updated_at = NOW()
+       WHERE id = $1 AND user_id = $2 AND status IN ('queued', 'pending_payment')
+       RETURNING *`,
+      [id, req.user.id]
+    );
+
+    if (result.rowCount === 0) {
+      // Déjà passée à un autre statut entre-temps (paiement confirmé pile
+      // au même moment, par ex.) -- pas une erreur, on renvoie juste l'état
+      // actuel pour que l'app affiche la bonne chose.
+      const current = await db.query('SELECT * FROM orders WHERE id = $1 AND user_id = $2', [id, req.user.id]);
+      if (!current.rows[0]) return errorResponse(res, 'Commande introuvable', 404);
+      return successResponse(res, { order: current.rows[0] });
+    }
+
+    console.log(`🚫 Commande ${id} annulée (paiement non validé après 5 min)`);
+    io.emit('order:cancelled', { orderId: id });
+    return successResponse(res, { order: result.rows[0] });
+  } catch (error) {
+    console.error('Erreur cancelUnpaidOrder:', error);
+    return errorResponse(res, "Erreur lors de l'annulation", 500);
+  }
+};
+
 // GET /api/orders/:id
 export const getOrder = async (req, res) => {
   try {

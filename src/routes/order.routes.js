@@ -6,6 +6,7 @@ import {
   getOrder,
   getOrderHistory,
   getOffers,
+  cancelUnpaidOrder,
 } from '../controllers/order.controller.js';
 import { authenticateUser } from '../middlewares/auth.js';
 
@@ -16,6 +17,7 @@ router.post('/', authenticateUser, createOrder);
 router.get('/history', authenticateUser, getOrderHistory);
 router.get('/:id', authenticateUser, getOrder);
 router.post('/:id/pay', authenticateUser, initiatePayment);
+router.post('/:id/cancel-timeout', authenticateUser, cancelUnpaidOrder);
 router.post('/:id/wave-callback', waveCallback);
 
 export default router;

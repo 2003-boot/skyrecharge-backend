@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS orders (
       'in_progress',
       'completed',
       'failed',
-      'refunded'
+      'refunded',
+      'cancelled'
     )),
   wave_transaction_id VARCHAR(255),
   wave_checkout_url TEXT,
