@@ -60,6 +60,67 @@ export const register = async (req, res) => {
   }
 };
 
+// POST /api/auth/recover-otp
+// Distinct de register() : celle-ci sert à un compte qui existe déjà et a
+// oublié son PIN (lien "PIN oublié ?" sur pin-login.tsx) -- register()
+// refuse volontairement les numéros déjà enregistrés, ce qui est correct
+// pour l'inscription mais rendait la récupération impossible (le seul
+// chemin d'envoi d'OTP disponible pour ce cas était register()).
+//
+// Limite anti-spam : 3 envois par semaine calendaire max par compte (le
+// SMS coûte réellement de l'argent) -- au-delà, on demande de passer par
+// le support plutôt que de continuer à spammer le numéro.
+const RECOVERY_OTP_WEEKLY_LIMIT = 3;
+
+export const sendRecoveryOTP = async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) return errorResponse(res, 'Numéro requis', 400);
+
+    const userResult = await db.query(
+      'SELECT id FROM users WHERE phone = $1 AND is_active = TRUE',
+      [phone]
+    );
+    if (userResult.rows.length === 0) {
+      return errorResponse(res, 'Compte introuvable', 404);
+    }
+
+    const weeklyCountResult = await db.query(
+      `SELECT COUNT(*) FROM otp_codes
+       WHERE phone = $1 AND purpose = 'recovery'
+         AND created_at >= date_trunc('week', CURRENT_DATE)`,
+      [phone]
+    );
+    if (parseInt(weeklyCountResult.rows[0].count) >= RECOVERY_OTP_WEEKLY_LIMIT) {
+      return errorResponse(
+        res,
+        'Limite de récupération par SMS atteinte pour cette semaine. Contactez le support pour récupérer votre compte.',
+        429
+      );
+    }
+
+    const otp = generateOTP(6);
+    const expiresAt = getOTPExpiry(10);
+
+    await db.query(
+      'UPDATE otp_codes SET is_used = TRUE WHERE phone = $1 AND is_used = FALSE',
+      [phone]
+    );
+
+    await db.query(
+      `INSERT INTO otp_codes (phone, code, expires_at, purpose) VALUES ($1, $2, $3, 'recovery')`,
+      [phone, otp, expiresAt]
+    );
+
+    await sendOTPSMS(phone, otp);
+
+    return successResponse(res, { phone }, 'Code OTP envoyé avec succès');
+  } catch (error) {
+    console.error('Erreur sendRecoveryOTP:', error);
+    return errorResponse(res, "Erreur lors de l'envoi du code", 500);
+  }
+};
+
 // POST /api/auth/verify-otp
 export const verifyOTP = async (req, res) => {
   try {

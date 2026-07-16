@@ -121,6 +121,8 @@ CREATE TABLE IF NOT EXISTS otp_codes (
   code VARCHAR(10) NOT NULL,
   expires_at TIMESTAMP NOT NULL,
   is_used BOOLEAN DEFAULT FALSE,
+  purpose VARCHAR(20) DEFAULT 'register'
+    CHECK (purpose IN ('register', 'recovery')),
   created_at TIMESTAMP DEFAULT NOW()
 );
 
