@@ -334,18 +334,18 @@ const processUSSDAfterPayment = async (order) => {
 //   (throttle) — le remboursement est encore à traiter, on ne dit PAS
 //   "vous avez été remboursé".
 const REFUND_MESSAGES = {
-  technical: "Votre transaction n'a pas pu être finalisée. Le remboursement a été initié automatiquement.",
-  insufficient_balance: "Le fournisseur ne dispose pas actuellement d'assez de solde pour traiter votre demande. Vous avez été remboursé automatiquement — vous pouvez réessayer avec un montant plus petit, ou plus tard.",
-  network_issue: "Un problème de réseau chez votre opérateur a empêché la transaction. Vous avez été remboursé automatiquement — vous pouvez réessayer dans quelques instants.",
-  other: "Votre transaction n'a pas pu être finalisée. Le remboursement a été initié automatiquement.",
+  technical: 'Transaction échouée. Vous avez été remboursé automatiquement.',
+  insufficient_balance: 'Solde fournisseur insuffisant. Vous êtes remboursé — réessayez plus tard.',
+  network_issue: 'Problème réseau opérateur. Vous êtes remboursé, réessayez dans un instant.',
+  other: 'Transaction échouée. Vous avez été remboursé automatiquement.',
 };
 
 const REFUND_MESSAGES_MANUAL = {
-  technical: "Votre transaction n'a pas pu être finalisée. Votre remboursement est en cours de traitement par notre équipe.",
-  insufficient_balance: "Le fournisseur ne dispose pas actuellement d'assez de solde pour traiter votre demande. Votre remboursement est en cours de traitement par notre équipe.",
-  network_issue: "Un problème de réseau chez votre opérateur a empêché la transaction. Votre remboursement est en cours de traitement par notre équipe.",
-  throttled: "Plusieurs tentatives ont échoué récemment. Votre remboursement est en cours de traitement par notre équipe.",
-  other: "Votre transaction n'a pas pu être finalisée. Votre remboursement est en cours de traitement par notre équipe.",
+  technical: 'Transaction échouée. Remboursement en cours de traitement.',
+  insufficient_balance: 'Solde fournisseur insuffisant. Remboursement en cours de traitement.',
+  network_issue: 'Problème réseau opérateur. Remboursement en cours de traitement.',
+  throttled: 'Trop de tentatives récentes. Remboursement en cours de traitement.',
+  other: 'Transaction échouée. Remboursement en cours de traitement.',
 };
 
 // Anti-spam : chaque remboursement cashin coûte des frais réels (~2%).
