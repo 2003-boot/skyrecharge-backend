@@ -288,12 +288,11 @@ const processUSSDAfterPayment = async (order) => {
       );
       io.emit('order:completed', { orderId: order.id, message: result.content });
       console.log(`✅ Commande ${order.id} complétée!`);
-      sendPushToUser(
-        order.user_id,
-        'Recharge réussie ✅',
-        `Votre recharge de ${order.total_amount.toLocaleString('fr-FR')} F a bien été effectuée.`,
-        { orderId: order.id, type: 'order_completed' }
-      ).catch(err => console.error('⚠️ Push order:completed non envoyé:', err.message));
+      // Pas de push ici volontairement : le client voit déjà l'écran de
+      // succès en direct (polling sur processing.tsx) — une notif push en
+      // plus serait redondante. Contrairement au remboursement (voir
+      // notifyRefunded plus bas), qui reste utile même si le client a déjà
+      // quitté l'app.
       return;
     }
 
