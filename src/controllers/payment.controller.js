@@ -345,15 +345,16 @@ const REFUND_MESSAGES_MANUAL = {
 // Anti-spam : chaque remboursement cashin coûte des frais réels (~2%).
 // Système basé sur la base de données (pas Redis) — auditable directement
 // dans `orders`, sans avoir besoin d'inspecter un compteur Redis à part.
-// Deux limites indépendantes, la première atteinte déclenche le mode
-// manuel :
-//   - 3 remboursements automatiques maximum par SEMAINE calendaire
-//     (lundi-dimanche), tous types d'échec confondus
-//   - 20 000f maximum remboursés automatiquement par CLIENT et par JOUR
-//     calendaire — protège contre un unique remboursement disproportionné
-//     autant que contre plusieurs petits qui s'accumulent
+// Deux limites indépendantes sur la MÊME fenêtre (semaine calendaire,
+// lundi-dimanche), la première atteinte déclenche le mode manuel :
+//   - 3 remboursements automatiques maximum par semaine, tous types
+//     d'échec confondus
+//   - 10 000f maximum remboursés automatiquement par CLIENT et par SEMAINE
+//     (cumulé, pas juste le dernier remboursement) — protège contre un
+//     unique remboursement disproportionné autant que contre plusieurs
+//     petits qui s'accumulent
 const REFUND_WEEKLY_LIMIT = 3;
-const REFUND_DAILY_AMOUNT_CAP = 20000;
+const REFUND_WEEKLY_AMOUNT_CAP = 10000;
 
 const isRefundThrottled = async (userId, refundAmount) => {
   try {
@@ -368,15 +369,15 @@ const isRefundThrottled = async (userId, refundAmount) => {
       return true;
     }
 
-    const dailyAmountResult = await db.query(
+    const weeklyAmountResult = await db.query(
       `SELECT COALESCE(SUM(total_amount), 0) AS total FROM orders
        WHERE user_id = $1
          AND refund_status IN ('pending', 'completed')
-         AND created_at >= CURRENT_DATE`,
+         AND created_at >= date_trunc('week', CURRENT_DATE)`,
       [userId]
     );
-    const alreadyRefundedToday = parseInt(dailyAmountResult.rows[0].total);
-    if (alreadyRefundedToday + refundAmount > REFUND_DAILY_AMOUNT_CAP) {
+    const alreadyRefundedThisWeek = parseInt(weeklyAmountResult.rows[0].total);
+    if (alreadyRefundedThisWeek + refundAmount > REFUND_WEEKLY_AMOUNT_CAP) {
       return true;
     }
 
@@ -441,7 +442,7 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
   }
 
   // Anti-spam appliqué à tous les types d'échec (voir isRefundThrottled
-  // ci-dessus : 3/semaine ou 20 000f/jour, le premier plafond atteint
+  // ci-dessus : 3/semaine ou 10 000f/semaine (cumulé), le premier plafond atteint
   // déclenche la revue manuelle).
   const throttled = await isRefundThrottled(order.user_id, order.total_amount);
   if (throttled) {
