@@ -16,13 +16,19 @@ export const register = async (req, res) => {
       return errorResponse(res, 'Prénom et numéro requis', 400);
     }
 
-    // Vérifier si le numéro existe déjà
+    // Vérifier si le numéro existe déjà -- seulement bloquant si le compte
+    // est VRAIMENT actif (déjà passé par la vérification OTP). Une ligne
+    // avec is_active=FALSE est juste une inscription interrompue (ex:
+    // l'utilisateur a quitté l'app avant de saisir le code) -- dans ce
+    // cas, on traite cet appel comme un renvoi de code plutôt que de
+    // bloquer avec "déjà enregistré", ce qui piégeait l'utilisateur sans
+    // aucun moyen de reprendre son inscription.
     const existing = await db.query(
-      'SELECT id FROM users WHERE phone = $1',
+      'SELECT id, is_active FROM users WHERE phone = $1',
       [phone]
     );
 
-    if (existing.rows.length > 0) {
+    if (existing.rows.length > 0 && existing.rows[0].is_active) {
       return errorResponse(res, 'Ce numéro est déjà enregistré', 409);
     }
 
@@ -38,7 +44,7 @@ export const register = async (req, res) => {
 
     // Sauvegarder le nouvel OTP
     await db.query(
-      'INSERT INTO otp_codes (phone, code, expires_at) VALUES ($1, $2, $3)',
+      `INSERT INTO otp_codes (phone, code, expires_at, purpose) VALUES ($1, $2, $3, 'register')`,
       [phone, otp, expiresAt]
     );
 
@@ -259,7 +265,7 @@ export const login = async (req, res) => {
     );
 
     await db.query(
-      'INSERT INTO otp_codes (phone, code, expires_at) VALUES ($1, $2, $3)',
+      `INSERT INTO otp_codes (phone, code, expires_at, purpose) VALUES ($1, $2, $3, 'register')`,
       [phone, otp, expiresAt]
     );
 
