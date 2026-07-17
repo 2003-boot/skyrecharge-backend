@@ -176,7 +176,7 @@ export const setMaintenanceMode = async (req, res) => {
     if (enabled) {
       broadcastPush(
         'Maintenance en cours',
-        "Notre application est en maintenance. Vous recevrez une notification lorsqu'elle sera à nouveau disponible.",
+        "L'application est en maintenance. On vous préviendra à son retour.",
         { type: 'maintenance' }
       ).catch(err => console.error('⚠️ Push maintenance non envoyé:', err.message));
     }
@@ -213,7 +213,7 @@ export const getRecentOrders = async (req, res) => {
        FROM orders o
        LEFT JOIN users u ON u.id = o.user_id
        ORDER BY o.created_at DESC
-       LIMIT 10`
+       LIMIT 5`
     );
     return successResponse(res, { orders: result.rows }, 'Dernières transactions récupérées');
   } catch (error) {
@@ -473,10 +473,10 @@ export const getMessagesHistory = async (req, res) => {
     const { channel } = req.query; // 'sms' | 'push' | absent (les deux)
     const result = channel && ['sms', 'push'].includes(channel)
       ? await db.query(
-          `SELECT * FROM admin_messages WHERE channel = $1 ORDER BY created_at DESC LIMIT 50`,
+          `SELECT * FROM admin_messages WHERE channel = $1 ORDER BY created_at DESC LIMIT 5`,
           [channel]
         )
-      : await db.query(`SELECT * FROM admin_messages ORDER BY created_at DESC LIMIT 50`);
+      : await db.query(`SELECT * FROM admin_messages ORDER BY created_at DESC LIMIT 5`);
 
     return successResponse(res, { messages: result.rows }, 'Historique récupéré');
   } catch (error) {
@@ -586,7 +586,7 @@ export const transferWebhook = async (req, res) => {
 export const getTransfersHistory = async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT * FROM supplier_transfers ORDER BY created_at DESC LIMIT 50`
+      `SELECT * FROM supplier_transfers ORDER BY created_at DESC LIMIT 5`
     );
     return successResponse(res, { transfers: result.rows }, 'Historique récupéré');
   } catch (error) {
