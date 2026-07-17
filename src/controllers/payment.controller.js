@@ -403,7 +403,7 @@ const isRefundThrottled = async (userId, refundAmount) => {
 // dédié (customer_message, stocké sur la commande), doublon inutile sur
 // la page Notifications.
 
-const triggerRefund = async (order, internalReason, failureType = 'other') => {
+export const triggerRefund = async (order, internalReason, failureType = 'other') => {
   // Alerte fournisseur immédiate — zéro latence contrairement au check
   // périodique (10 min), qui reste un complément préventif mais ne
   // détecte jamais aussi vite qu'un vrai échec en direct.

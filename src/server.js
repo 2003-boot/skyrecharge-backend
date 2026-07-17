@@ -11,6 +11,7 @@ import routes from './routes/index.js';
 import { errorHandler, notFound } from './middlewares/errorHandler.js';
 import { apiLimiter } from './middlewares/rateLimiter.js';
 import { startBalanceMonitor, startDoubleLossMonitor } from './services/balance-monitor.service.js';
+import { startStuckOrdersMonitor } from './services/stuck-orders-monitor.service.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -68,5 +69,6 @@ httpServer.listen(config.port, () => {
 // Surveillance du solde des modems (alertes SMS fournisseurs)
 startBalanceMonitor();
 startDoubleLossMonitor();
+startStuckOrdersMonitor();
 
 export default app;
