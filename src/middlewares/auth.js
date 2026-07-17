@@ -18,6 +18,9 @@ export const authenticateUser = async (req, res, next) => {
       return errorResponse(res, 'Utilisateur introuvable ou inactif', 401);
     }
     req.user = result.rows[0];
+    // Propagé depuis le token, pas depuis la base -- voir le commentaire
+    // sur viaOtp dans verifyOTP (auth.controller.js) pour le pourquoi.
+    req.user.viaOtp = decoded.viaOtp === true;
     next();
   } catch (error) {
     return errorResponse(res, 'Token invalide ou expiré', 401);

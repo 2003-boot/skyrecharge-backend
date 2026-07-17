@@ -8,13 +8,15 @@ export const updateProfile = async (req, res) => {
 
     // Défense en profondeur : la vérification de l'ancien PIN se fait déjà
     // côté app (écran pin-setup.tsx), mais un appel direct à cette API
-    // pourrait la contourner -- on revérifie donc ici aussi. Seulement
-    // exigé quand un PIN existe déjà (pas lors de la toute première
-    // configuration, où il n'y a rien à prouver).
+    // pourrait la contourner -- on revérifie donc ici aussi. Exigé quand un
+    // PIN existe déjà (pas lors de la toute première configuration, où il
+    // n'y a rien à prouver) -- SAUF si l'identité vient d'être prouvée par
+    // un code OTP (cas "PIN oublié" -- voir viaOtp dans verifyOTP), auquel
+    // cas demander l'ancien PIN n'aurait aucun sens.
     const userResult = await db.query(`SELECT pin_hash, pin_enabled FROM users WHERE id = $1`, [req.user.id]);
     const existingUser = userResult.rows[0];
 
-    if (pin && existingUser?.pin_enabled && existingUser?.pin_hash) {
+    if (pin && existingUser?.pin_enabled && existingUser?.pin_hash && !req.user.viaOtp) {
       if (!current_pin) {
         return errorResponse(res, 'PIN actuel requis', 400);
       }

@@ -163,7 +163,15 @@ export const verifyOTP = async (req, res) => {
     const user = userResult.rows[0];
 
     // Générer les tokens
-    const accessToken = generateAccessToken({ id: user.id, role: 'user' });
+    // viaOtp: true -- ce claim signale que l'identité vient d'être prouvée
+    // par un code reçu par SMS (utile pour le cas "PIN oublié" : l'écran
+    // pin-setup.tsx qui suit doit pouvoir définir un nouveau PIN SANS
+    // l'ancien, puisque c'est justement le but de la récupération). Le
+    // middleware authenticateUser propage ce claim sur req.user, et
+    // updateProfile s'en sert pour lever l'exigence d'ancien PIN --
+    // seulement pour ce token précis, valable le temps normal d'un token
+    // d'accès (1h par défaut), pas indéfiniment.
+    const accessToken = generateAccessToken({ id: user.id, role: 'user', viaOtp: true });
     const refreshToken = generateRefreshToken({ id: user.id, role: 'user' });
 
     return successResponse(res, {
