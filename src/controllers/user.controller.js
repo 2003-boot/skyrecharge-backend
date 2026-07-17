@@ -4,7 +4,25 @@ import { successResponse, errorResponse } from '../utils/response.js';
 
 export const updateProfile = async (req, res) => {
   try {
-    const { first_name, wave_number, notifications_enabled, pin_enabled, pin } = req.body;
+    const { first_name, wave_number, notifications_enabled, pin_enabled, pin, current_pin } = req.body;
+
+    // Défense en profondeur : la vérification de l'ancien PIN se fait déjà
+    // côté app (écran pin-setup.tsx), mais un appel direct à cette API
+    // pourrait la contourner -- on revérifie donc ici aussi. Seulement
+    // exigé quand un PIN existe déjà (pas lors de la toute première
+    // configuration, où il n'y a rien à prouver).
+    const userResult = await db.query(`SELECT pin_hash, pin_enabled FROM users WHERE id = $1`, [req.user.id]);
+    const existingUser = userResult.rows[0];
+
+    if (pin && existingUser?.pin_enabled && existingUser?.pin_hash) {
+      if (!current_pin) {
+        return errorResponse(res, 'PIN actuel requis', 400);
+      }
+      const validCurrentPin = await bcrypt.compare(current_pin, existingUser.pin_hash);
+      if (!validCurrentPin) {
+        return errorResponse(res, 'PIN actuel incorrect', 401);
+      }
+    }
 
     let pinHash = null;
     if (pin) {
@@ -43,12 +61,54 @@ export const updateProfile = async (req, res) => {
 // Appelé automatiquement par l'app au démarrage (une fois la permission
 // notifications accordée) -- pas une action utilisateur explicite, d'où
 // un endpoint dédié plutôt que de le glisser dans updateProfile.
+// ─── POST /api/users/verify-pin ─────────────────────────────────────────────
+// Utilisé par l'écran pin-setup.tsx (mode "modifier le PIN") pour vérifier
+// l'ancien PIN immédiatement, avant de laisser l'utilisateur choisir un
+// nouveau PIN -- plutôt que de ne découvrir l'erreur qu'à la toute fin du
+// parcours (après avoir déjà saisi + confirmé le nouveau).
+export const verifyPin = async (req, res) => {
+  try {
+    const { pin } = req.body;
+    if (!pin) {
+      return errorResponse(res, 'PIN requis', 400);
+    }
+
+    const userResult = await db.query(`SELECT pin_hash FROM users WHERE id = $1`, [req.user.id]);
+    const existingUser = userResult.rows[0];
+    if (!existingUser?.pin_hash) {
+      return errorResponse(res, 'Aucun PIN configuré', 400);
+    }
+
+    const valid = await bcrypt.compare(pin, existingUser.pin_hash);
+    if (!valid) {
+      return errorResponse(res, 'PIN incorrect', 401);
+    }
+
+    return successResponse(res, {}, 'PIN valide');
+  } catch (error) {
+    console.error('Erreur verifyPin:', error);
+    return errorResponse(res, 'Erreur lors de la vérification', 500);
+  }
+};
+
 export const registerPushToken = async (req, res) => {
   try {
     const { token } = req.body;
     if (!token) {
       return errorResponse(res, 'Token requis', 400);
     }
+
+    // Un même token Expo identifie un APPAREIL, pas un compte -- si
+    // quelqu'un a testé/utilisé plusieurs comptes sur ce même téléphone
+    // (courant en dev, mais possible aussi pour un vrai utilisateur qui
+    // change de compte), le token pouvait rester associé à l'ancien compte
+    // EN PLUS du nouveau. Un push "à tous" partait alors deux fois vers le
+    // même appareil. On le retire d'abord de tout autre compte avant de
+    // l'associer au compte courant -- un token, un seul propriétaire.
+    await db.query(
+      `UPDATE users SET fcm_token = NULL WHERE fcm_token = $1 AND id != $2`,
+      [token, req.user.id]
+    );
 
     await db.query(
       `UPDATE users SET fcm_token = $1, updated_at = NOW() WHERE id = $2`,
