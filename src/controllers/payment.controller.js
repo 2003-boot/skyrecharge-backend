@@ -182,31 +182,57 @@ export const babimoWebhook = async (req, res) => {
 // L'app poll cette route toutes les 3s depuis processing.tsx ; si Babimo
 // confirme le succès ici, on déclenche nous-mêmes la suite (recharge USSD)
 // au lieu de se reposer uniquement sur le webhook.
+//
+// La logique elle-même vit dans checkAndResolvePaymentStatus, exportée
+// séparément -- réutilisée par stuck-orders-monitor.service.js pour les
+// commandes 'queued' bloquées quand AUCUN écran n'a jamais pu faire ce
+// check (ex: app tuée en arrière-plan pendant le paiement Wave, redirigée
+// vers l'accueil au retour plutôt que vers processing.tsx -- ce check-ci
+// est le seul filet de sécurité qui reste dans ce cas précis).
+export const checkAndResolvePaymentStatus = async (payToken) => {
+  const status = await checkPaymentStatus(payToken);
+
+  // Le format exact renvoyé par /check-status n'est pas garanti à 100%,
+  // donc on log la réponse brute et on essaie plusieurs chemins possibles.
+  console.log('🔍 Réponse check-status Babimo:', JSON.stringify(status));
+  const statut =
+    status?.data?.status?.statut ||
+    status?.data?.statut ||
+    status?.status?.statut ||
+    status?.statut ||
+    status?.status;
+
+  if (statut === 'SUCCESS' || statut === 'SUCCESSFUL') {
+    const orderResult = await db.query('SELECT * FROM orders WHERE pay_token = $1', [payToken]);
+    const order = orderResult.rows[0];
+    if (order) await handleSuccessfulPayment(order);
+  } else if (statut === 'FAILED' || statut === 'CANCELLED') {
+    const orderResult = await db.query('SELECT * FROM orders WHERE pay_token = $1', [payToken]);
+    const order = orderResult.rows[0];
+    if (order) await handleFailedPayment(order, `Paiement ${statut}`);
+  }
+
+  return status;
+};
+
 export const checkStatus = async (req, res) => {
   try {
     const { payToken } = req.params;
-    const status = await checkPaymentStatus(payToken);
 
-    // Le format exact renvoyé par /check-status n'est pas garanti à 100%,
-    // donc on log la réponse brute et on essaie plusieurs chemins possibles.
-    console.log('🔍 Réponse check-status Babimo:', JSON.stringify(status));
-    const statut =
-      status?.data?.status?.statut ||
-      status?.data?.statut ||
-      status?.status?.statut ||
-      status?.statut ||
-      status?.status;
-
-    if (statut === 'SUCCESS' || statut === 'SUCCESSFUL') {
-      const orderResult = await db.query('SELECT * FROM orders WHERE pay_token = $1', [payToken]);
-      const order = orderResult.rows[0];
-      if (order) await handleSuccessfulPayment(order);
-    } else if (statut === 'FAILED' || statut === 'CANCELLED') {
-      const orderResult = await db.query('SELECT * FROM orders WHERE pay_token = $1', [payToken]);
-      const order = orderResult.rows[0];
-      if (order) await handleFailedPayment(order, `Paiement ${statut}`);
+    // Vérification d'appartenance : cet endpoint est authentifié
+    // (authenticateUser), mais rien ne garantissait jusqu'ici que le
+    // payToken fourni appartient bien à l'utilisateur qui appelle --
+    // n'importe quel compte valide pouvait consulter, et même
+    // déclencher la résolution, du paiement de n'importe qui d'autre.
+    const ownerCheck = await db.query(
+      'SELECT id FROM orders WHERE pay_token = $1 AND user_id = $2',
+      [payToken, req.user.id]
+    );
+    if (ownerCheck.rows.length === 0) {
+      return errorResponse(res, 'Commande introuvable', 404);
     }
 
+    const status = await checkAndResolvePaymentStatus(payToken);
     return successResponse(res, { status });
   } catch (error) {
     console.error('❌ Erreur checkStatus:', error.message);
