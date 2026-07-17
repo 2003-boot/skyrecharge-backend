@@ -9,7 +9,6 @@ import db from '../config/database.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { io } from '../server.js';
 import { sendUSSD } from '../services/ussd.service.js';
-import { sendPushToUser } from '../services/push.service.js';
 import { alertInsufficientBalanceNow } from '../services/balance-monitor.service.js';
 
 const MODEM_BY_OPERATOR = {
@@ -398,17 +397,11 @@ const isRefundThrottled = async (userId, refundAmount) => {
 // (paiement encaissé, recharge ratée, ET remboursement automatique en
 // échec) est le pire scénario business : il nécessite une intervention
 // manuelle rapide pour ne pas perdre la confiance du client.
-// Notification push commune aux 4 branches de remboursement ci-dessous --
-// évite de dupliquer le même appel (et le même risque d'oubli) à chaque
-// point de sortie de triggerRefund.
-const notifyRefunded = (order, customerMessage) => {
-  sendPushToUser(
-    order.user_id,
-    'Commande remboursée 💸',
-    customerMessage,
-    { orderId: order.id, type: 'order_refunded' }
-  ).catch(err => console.error('⚠️ Push order:refunded non envoyé:', err.message));
-};
+//
+// Pas de notif push/historique in-app ici (volontairement, comme pour les
+// succès) : le client voit déjà le motif exact sur l'écran refunded.tsx
+// dédié (customer_message, stocké sur la commande), doublon inutile sur
+// la page Notifications.
 
 const triggerRefund = async (order, internalReason, failureType = 'other') => {
   // Alerte fournisseur immédiate — zéro latence contrairement au check
@@ -437,7 +430,6 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
       [internalReason, REFUND_MESSAGES_MANUAL[failureType] || REFUND_MESSAGES_MANUAL.other, order.id]
     );
     io.emit('order:refunded', { orderId: order.id, refundStatus: 'failed' });
-    notifyRefunded(order, REFUND_MESSAGES_MANUAL[failureType] || REFUND_MESSAGES_MANUAL.other);
     return;
   }
 
@@ -454,7 +446,6 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
       [internalReason, REFUND_MESSAGES_MANUAL.throttled, order.id]
     );
     io.emit('order:refunded', { orderId: order.id, refundStatus: 'manual_required' });
-    notifyRefunded(order, REFUND_MESSAGES_MANUAL.throttled);
     return;
   }
 
@@ -483,7 +474,6 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
     );
 
     io.emit('order:refunded', { orderId: order.id, refundStatus: 'pending' });
-    notifyRefunded(order, REFUND_MESSAGES[failureType] || REFUND_MESSAGES.other);
 
   } catch (error) {
     // L'appel cashin lui-même a échoué (API Babimo indisponible, solde
@@ -500,7 +490,6 @@ const triggerRefund = async (order, internalReason, failureType = 'other') => {
     );
 
     io.emit('order:refunded', { orderId: order.id, refundStatus: 'failed' });
-    notifyRefunded(order, REFUND_MESSAGES_MANUAL[failureType] || REFUND_MESSAGES_MANUAL.other);
   }
 };
 
