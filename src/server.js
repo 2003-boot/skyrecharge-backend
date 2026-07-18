@@ -10,7 +10,7 @@ import config from './config/index.js';
 import routes from './routes/index.js';
 import { errorHandler, notFound } from './middlewares/errorHandler.js';
 import { apiLimiter } from './middlewares/rateLimiter.js';
-import { startBalanceMonitor, startDoubleLossMonitor } from './services/balance-monitor.service.js';
+import { startBalanceMonitor, startDoubleLossMonitor, startWorkerThreadMonitor } from './services/balance-monitor.service.js';
 import { startStuckOrdersMonitor } from './services/stuck-orders-monitor.service.js';
 
 const app = express();
@@ -70,5 +70,6 @@ httpServer.listen(config.port, () => {
 startBalanceMonitor();
 startDoubleLossMonitor();
 startStuckOrdersMonitor();
+startWorkerThreadMonitor();
 
 export default app;
