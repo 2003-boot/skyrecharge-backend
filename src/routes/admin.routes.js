@@ -4,6 +4,7 @@ import {
   getTimeseries,
   getBalances,
   getRecentOrders,
+  getOrdersHistory,
   getManualReviewOrders,
   resolveManualRefund,
   getReconciliationAlerts,
@@ -41,6 +42,7 @@ router.get('/stats', getStats);
 router.get('/stats/timeseries', getTimeseries);
 router.get('/balances', getBalances);
 router.get('/orders/recent', getRecentOrders);
+router.get('/orders/history', getOrdersHistory);
 router.get('/orders/manual-review', getManualReviewOrders);
 router.patch('/orders/:id/resolve-refund', resolveManualRefund);
 router.get('/orders/reconciliation', getReconciliationAlerts);

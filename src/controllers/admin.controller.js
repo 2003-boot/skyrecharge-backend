@@ -222,6 +222,77 @@ export const getRecentOrders = async (req, res) => {
   }
 };
 
+// ─── GET /api/admin/orders/history ─────────────────────────────────────────
+// Page "Historique des transactions" complète : filtres (statut, opérateur,
+// plage de dates), recherche (numéro bénéficiaire ou ID de commande), et
+// pagination par décalage (offset) pour le scroll infini côté front.
+export const getOrdersHistory = async (req, res) => {
+  try {
+    const { limit = 10, offset = 0, status, operator, search, dateFrom, dateTo } = req.query;
+
+    const conditions = [];
+    const params = [];
+    let idx = 1;
+
+    if (status && status !== 'all') {
+      conditions.push(`o.status = $${idx++}`);
+      params.push(status);
+    }
+    if (operator && operator !== 'all') {
+      conditions.push(`o.operator = $${idx++}`);
+      params.push(operator);
+    }
+    if (dateFrom) {
+      conditions.push(`o.created_at >= $${idx++}`);
+      params.push(dateFrom);
+    }
+    if (dateTo) {
+      conditions.push(`o.created_at <= $${idx++}`);
+      params.push(dateTo);
+    }
+    if (search && search.trim()) {
+      // Recherche sur le numéro bénéficiaire OU l'ID de commande -- les
+      // UUID complets sont peu pratiques à taper, donc en ILIKE partiel
+      // comme le numéro, pour retrouver une commande à partir des
+      // derniers caractères vus dans un lien ou un ticket support.
+      conditions.push(`(o.beneficiary_phone ILIKE $${idx} OR o.id::text ILIKE $${idx})`);
+      params.push(`%${search.trim()}%`);
+      idx++;
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Plafond dur sur limit -- évite un ?limit=999999 abusif, peu importe
+    // ce que le front envoie normalement.
+    const safeLimit = Math.min(parseInt(limit) || 10, 100);
+    const safeOffset = Math.max(parseInt(offset) || 0, 0);
+
+    const result = await db.query(
+      `SELECT o.id, o.order_type, o.beneficiary_phone, o.operator,
+              o.amount, o.fees, o.total_amount, o.status,
+              o.created_at, o.completed_at,
+              u.first_name AS user_first_name, u.phone AS user_phone
+       FROM orders o
+       LEFT JOIN users u ON u.id = o.user_id
+       ${whereClause}
+       ORDER BY o.created_at DESC
+       LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+      params
+    );
+
+    // hasMore : on a reçu pile "limit" lignes -> il y en a probablement
+    // d'autres après. Suffisant pour du scroll infini, évite un COUNT(*)
+    // séparé (coûteux) à chaque requête juste pour savoir s'il faut
+    // afficher un bouton "charger plus".
+    const hasMore = result.rows.length === safeLimit;
+
+    return successResponse(res, { orders: result.rows, hasMore });
+  } catch (error) {
+    console.error('Erreur getOrdersHistory:', error);
+    return errorResponse(res, "Erreur lors de la récupération de l'historique", 500);
+  }
+};
+
 // ─── GET /api/admin/orders/manual-review ────────────────────────────────────
 // Commandes remboursées mais dont le remboursement automatique a été
 // écarté (throttle 3/semaine ou 20 000f/jour, ou payment_method/phone
