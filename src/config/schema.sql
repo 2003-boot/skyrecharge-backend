@@ -234,5 +234,5 @@ INSERT INTO config (key, value, description) VALUES
   ('maintenance_mode', 'false', 'Si true, l''app mobile affiche un écran de maintenance bloquant au lancement'),
   ('blocked_operators', '[]', 'Liste JSON des opérateurs (Orange/Moov/MTN) actuellement indisponibles, ex: ["MTN"]'),
   ('max_credit_amount', '5000', 'Montant maximum pour une recharge crédit en FCFA'),
-  ('max_daily_credit_orders', '2', 'Nombre maximum de recharges crédit par jour et par compte utilisateur')
+  ('max_daily_credit_orders', '5', 'Nombre maximum de recharges crédit par jour et par compte utilisateur')
 ON CONFLICT (key) DO NOTHING;
