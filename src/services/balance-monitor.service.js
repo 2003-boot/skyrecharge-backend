@@ -52,6 +52,12 @@ const RECHARGE_NUMBERS = {
   orange: process.env.ORANGE_RECHARGE_NUMBER,
 };
 
+// Montant à demander au fournisseur dans les messages -- une seule
+// variable pour les deux opérateurs, modifiable à tout moment dans le
+// .env sans toucher au code. Optionnelle : si absente, les messages
+// restent valides, juste sans mention de montant précis (comme avant).
+const MONTANT = process.env.MONTANT;
+
 // Les numéros fournisseurs sont stockés au format local (ex: 0101308007)
 // — HSMS attend le numéro complet à 10 chiffres, 0 initial INCLUS, avec
 // juste "225" devant (ex: "2250101308007") — confirmé par l'exemple
@@ -114,9 +120,10 @@ const checkOperatorBalance = async (operator) => {
 
     const label = OPERATOR_LABELS[operator] || operator;
     const rechargeNumber = RECHARGE_NUMBERS[operator];
+    const montantText = MONTANT ? ` de ${MONTANT} FCFA` : '';
     const message = rechargeNumber
-      ? `Bonjour, le solde ${label} SkyRecharge est bas : ${balance} FCFA restants sur le ${rechargeNumber}. Merci de recharger dès que possible.`
-      : `Bonjour, le solde ${label} SkyRecharge est bas : ${balance} FCFA restants. Merci de recharger dès que possible.`;
+      ? `Bonjour, le solde ${label} SkyRecharge est bas : ${balance} FCFA restants sur le ${rechargeNumber}. Merci de recharger${montantText} dès que possible.`
+      : `Bonjour, le solde ${label} SkyRecharge est bas : ${balance} FCFA restants. Merci de recharger${montantText} dès que possible.`;
 
     const result = await sendSMS(phone, message);
 
@@ -168,9 +175,10 @@ export const alertInsufficientBalanceNow = async (operator, orderId) => {
 
     const label = OPERATOR_LABELS[opKey] || operator;
     const rechargeNumber = RECHARGE_NUMBERS[opKey];
+    const montantText = MONTANT ? ` de ${MONTANT} FCFA` : '';
     const message = rechargeNumber
-      ? `Bonjour, une recharge SkyRecharge vient d'échouer par manque de solde ${label} sur le ${rechargeNumber} (commande ${orderId}). Merci de recharger dès que possible.`
-      : `Bonjour, une recharge SkyRecharge vient d'échouer par manque de solde ${label} (commande ${orderId}). Merci de recharger dès que possible.`;
+      ? `Bonjour, une recharge SkyRecharge vient d'échouer par manque de solde ${label} sur le ${rechargeNumber} (commande ${orderId}). Merci de recharger${montantText} dès que possible.`
+      : `Bonjour, une recharge SkyRecharge vient d'échouer par manque de solde ${label} (commande ${orderId}). Merci de recharger${montantText} dès que possible.`;
 
     const result = await sendSMS(phone, message);
     if (result.success) {
@@ -234,53 +242,4 @@ const processDoubleLossAlerts = async () => {
 export const startDoubleLossMonitor = () => {
   console.log(`🚨 Monitoring des doubles pertes démarré (vérification toutes les ${DOUBLE_LOSS_CHECK_INTERVAL_MS / 1000}s)`);
   setInterval(processDoubleLossAlerts, DOUBLE_LOSS_CHECK_INTERVAL_MS);
-};
-
-// ─── Threads worker morts (worker.py, Raspberry Pi) ──────────────────────
-// Le worker se relance déjà tout seul automatiquement quand un thread
-// (par opérateur) s'arrête de façon inattendue -- mais ça ne devrait
-// jamais arriver en fonctionnement normal, donc on veut quand même en
-// être informé activement plutôt que de compter sur quelqu'un qui
-// éplucherait les logs du Pi par hasard.
-const WORKER_THREAD_ALERT_LIST = 'worker_thread_alerts';
-const WORKER_THREAD_CHECK_INTERVAL_MS = 60 * 1000;
-
-const processWorkerThreadAlerts = async () => {
-  try {
-    let raw = await redisClient.rPop(WORKER_THREAD_ALERT_LIST);
-    while (raw) {
-      let alert;
-      try {
-        alert = JSON.parse(raw);
-      } catch {
-        raw = await redisClient.rPop(WORKER_THREAD_ALERT_LIST);
-        continue;
-      }
-
-      const label = OPERATOR_LABELS[alert.operator] || alert.operator;
-      console.error(`🚨 [WORKER] Thread ${label} arrêté puis relancé automatiquement sur le Pi.`);
-
-      const phone = toInternational(ADMIN_PHONE);
-      if (phone) {
-        const message = `Le thread ${label} du worker s'est arrêté puis a été relancé automatiquement. Vérifiez les logs si ça se reproduit.`;
-        const result = await sendSMS(phone, message);
-        if (result.success) {
-          console.log(`📱 Alerte thread worker mort envoyée — ${label} → ${phone}`);
-        } else {
-          console.error(`❌ Échec envoi alerte thread worker mort ${label}:`, result.error);
-        }
-      } else {
-        console.warn('⚠️ ADMIN_PHONE non configuré — alerte thread worker mort impossible à envoyer.');
-      }
-
-      raw = await redisClient.rPop(WORKER_THREAD_ALERT_LIST);
-    }
-  } catch (error) {
-    console.error('❌ Erreur traitement alertes thread worker mort:', error.message);
-  }
-};
-
-export const startWorkerThreadMonitor = () => {
-  console.log(`🧵 Monitoring des threads worker démarré (vérification toutes les ${WORKER_THREAD_CHECK_INTERVAL_MS / 1000}s)`);
-  setInterval(processWorkerThreadAlerts, WORKER_THREAD_CHECK_INTERVAL_MS);
 };
