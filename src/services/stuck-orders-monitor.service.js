@@ -111,4 +111,46 @@ export const startStuckOrdersMonitor = () => {
   console.log(`🧹 Filet de sécurité commandes bloquées démarré (vérification toutes les ${CHECK_INTERVAL_MS / 1000}s, seuils ${STUCK_THRESHOLD_MINUTES} min / ${STUCK_QUEUED_THRESHOLD_MINUTES} min)`);
   setInterval(checkStuckOrders, CHECK_INTERVAL_MS);
   setInterval(checkStuckQueuedOrders, CHECK_INTERVAL_MS);
+  setInterval(checkRecentlyCancelledOrders, CHECK_INTERVAL_MS);
+};
+
+// Fenêtre de revérification des commandes annulées -- 1h suffit largement
+// (un paiement qui finit par se confirmer arrive presque toujours dans
+// les toutes premières minutes suivant l'annulation, pas des heures
+// après). Au-delà, on arrête de vérifier pour ne pas spammer l'API
+// Babimo indéfiniment sur de vieilles commandes.
+const CANCELLED_RECHECK_WINDOW_MINUTES = 60;
+
+// Filet complémentaire à handleSuccessfulPayment (voir payment.controller.js
+// -- double perte détectée quand webhook/checkStatus arrivent APRÈS
+// l'annulation). Celui-ci couvre le cas où AUCUN webhook n'arrive jamais
+// du tout : sans ce balayage, une commande annulée par timeout dont le
+// paiement a quand même réussi resterait 'cancelled' pour toujours, sans
+// jamais être remboursée -- personne ne revérifie plus rien une fois
+// l'annulation posée. checkAndResolvePaymentStatus interroge Babimo
+// directement, ce qui déclenche handleSuccessfulPayment et donc, s'il y a
+// bien double perte, le remboursement automatique qu'on vient d'ajouter.
+const checkRecentlyCancelledOrders = async () => {
+  try {
+    const result = await db.query(
+      `SELECT * FROM orders
+       WHERE status = 'cancelled'
+         AND pay_token IS NOT NULL
+         AND updated_at > NOW() - INTERVAL '${CANCELLED_RECHECK_WINDOW_MINUTES} minutes'`
+    );
+
+    if (result.rows.length === 0) return;
+
+    console.warn(`🧹 [SWEEP] ${result.rows.length} commande(s) annulée(s) récemment -- revérification auprès de Babimo au cas où le paiement aurait quand même fini par réussir.`);
+
+    for (const order of result.rows) {
+      try {
+        await checkAndResolvePaymentStatus(order.pay_token);
+      } catch (err) {
+        console.error(`❌ [SWEEP] Échec revérification commande annulée ${order.id}:`, err.message);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Erreur checkRecentlyCancelledOrders:', error.message);
+  }
 };

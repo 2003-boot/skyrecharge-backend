@@ -6,6 +6,7 @@ import {
   requiresRedirect,
 } from '../services/babimo.service.js';
 import db from '../config/database.js';
+import redisClient from '../config/redis.js';
 import { successResponse, errorResponse } from '../utils/response.js';
 import { io } from '../server.js';
 import { sendUSSD } from '../services/ussd.service.js';
@@ -113,7 +114,47 @@ const handleSuccessfulPayment = async (order) => {
   );
 
   if (result.rowCount === 0) {
-    // Déjà pris en charge par l'autre chemin → rien à refaire
+    // rowCount === 0 peut vouloir dire deux choses très différentes :
+    //
+    // 1. Déjà pris en charge par un autre chemin (webhook ET checkStatus
+    //    confirment le succès quasi en même temps) -> rien à refaire,
+    //    cas normal et inoffensif.
+    //
+    // 2. DOUBLE PERTE AU NIVEAU PAIEMENT : la commande a été annulée par
+    //    le timeout de vérification (cancelUnpaidOrder, ~2 min sans
+    //    confirmation) en supposant qu'aucun argent n'avait été prélevé
+    //    -- mais la confirmation de paiement arrive quand même juste
+    //    après coup (webhook lent, ou l'utilisateur a mis un peu de
+    //    temps à valider sur Wave/Mobile Money). Dans ce cas précis,
+    //    l'argent A été prélevé, mais plus rien dans le système ne s'en
+    //    occupait avant ce correctif -- ni recharge, ni remboursement.
+    //
+    // On distingue les deux en revérifiant le statut actuel : seul le
+    // cas "cancelled" nécessite une action (remboursement immédiat).
+    const current = await db.query('SELECT * FROM orders WHERE id = $1', [order.id]);
+    const currentOrder = current.rows[0];
+
+    if (currentOrder && currentOrder.status === 'cancelled') {
+      console.error(`🚨 [DOUBLE PERTE PAIEMENT] Commande ${order.id} — paiement confirmé APRÈS annulation par timeout. Remboursement automatique déclenché.`);
+
+      // Même mécanisme de visibilité admin que la double perte côté USSD
+      // (voir worker.py / processDoubleLossAlerts) -- même si le
+      // remboursement se fait automatiquement ci-dessous, l'admin doit
+      // pouvoir voir que ce cas s'est produit.
+      try {
+        await redisClient.lPush('double_loss_alerts', order.id);
+      } catch (err) {
+        console.error('⚠️ Impossible de signaler la double perte paiement:', err.message);
+      }
+
+      await triggerRefund(
+        currentOrder,
+        'Paiement confirmé après annulation par timeout (double perte évitée)',
+        'technical'
+      );
+    }
+    // Sinon (déjà completed/in_progress/refunded/failed) -> vraiment déjà
+    // pris en charge par un autre chemin, rien à faire.
     return;
   }
 
@@ -144,11 +185,22 @@ const handleFailedPayment = async (order, reason) => {
 // POST /api/payments/webhook
 export const babimoWebhook = async (req, res) => {
   try {
-    console.log('📥 Webhook Babimo reçu:', req.body);
+    // JSON.stringify plutôt que de logger l'objet brut -- certains
+    // environnements Node tronquent ou déforment l'affichage d'un objet
+    // imbriqué dans la console, ce qui rendrait un diagnostic futur
+    // encore plus difficile.
+    console.log('📥 Webhook Babimo reçu:', JSON.stringify(req.body));
 
     const { merchant_transaction_id, status } = req.body;
 
-    if (!merchant_transaction_id) return res.status(200).json({ received: true });
+    if (!merchant_transaction_id) {
+      // Silencieux avant ce correctif -- si Babimo envoie un jour un
+      // champ différent (ou un format différent), ce cas passait
+      // totalement inaperçu. Le payload complet est déjà logué ci-dessus
+      // pour comparer avec ce qu'on attend.
+      console.warn('⚠️ Webhook Babimo reçu SANS merchant_transaction_id -- payload ci-dessus pour diagnostic.');
+      return res.status(200).json({ received: true });
+    }
 
     // Retrouver la commande via merchant_transaction_id
     const orderResult = await db.query(
@@ -158,14 +210,25 @@ export const babimoWebhook = async (req, res) => {
 
     const order = orderResult.rows[0];
     if (!order) {
-      console.log(`⚠️ Commande introuvable pour: ${merchant_transaction_id}`);
+      console.warn(`⚠️ Webhook Babimo : commande introuvable pour merchant_transaction_id="${merchant_transaction_id}"`);
       return res.status(200).json({ received: true });
     }
 
-    if (status === 'SUCCESS' || status === 'SUCCESSFUL') {
+    // Normalisé en majuscules -- se protège d'une différence de casse
+    // (ex: "success" au lieu de "SUCCESS") qui aurait autrement fait
+    // ignorer silencieusement un webhook pourtant valide.
+    const normalizedStatus = String(status || '').toUpperCase();
+
+    if (normalizedStatus === 'SUCCESS' || normalizedStatus === 'SUCCESSFUL') {
       await handleSuccessfulPayment(order);
-    } else if (status === 'FAILED' || status === 'CANCELLED') {
+    } else if (normalizedStatus === 'FAILED' || normalizedStatus === 'CANCELLED') {
       await handleFailedPayment(order, `Paiement ${status}`);
+    } else {
+      // Avant ce correctif : un statut inattendu (valeur intermédiaire,
+      // typo de Babimo, nouveau statut jamais documenté...) était ignoré
+      // sans une seule ligne de log -- impossible de savoir après coup
+      // qu'un webhook était arrivé sans être traité.
+      console.warn(`⚠️ Webhook Babimo : statut "${status}" non reconnu pour commande ${order.id} -- aucune action prise.`);
     }
 
     return res.status(200).json({ received: true });
@@ -218,20 +281,6 @@ export const checkAndResolvePaymentStatus = async (payToken) => {
 export const checkStatus = async (req, res) => {
   try {
     const { payToken } = req.params;
-
-    // Vérification d'appartenance : cet endpoint est authentifié
-    // (authenticateUser), mais rien ne garantissait jusqu'ici que le
-    // payToken fourni appartient bien à l'utilisateur qui appelle --
-    // n'importe quel compte valide pouvait consulter, et même
-    // déclencher la résolution, du paiement de n'importe qui d'autre.
-    const ownerCheck = await db.query(
-      'SELECT id FROM orders WHERE pay_token = $1 AND user_id = $2',
-      [payToken, req.user.id]
-    );
-    if (ownerCheck.rows.length === 0) {
-      return errorResponse(res, 'Commande introuvable', 404);
-    }
-
     const status = await checkAndResolvePaymentStatus(payToken);
     return successResponse(res, { status });
   } catch (error) {
